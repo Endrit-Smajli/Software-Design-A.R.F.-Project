@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <pwm.h>
+#include "pwm.h"
 
 typedef struct _Servo
 {
