@@ -7,6 +7,7 @@
 
 // Quarter-wave sine table (Q15)
 
+#include <stdint.h>
 const int16_t sin_table[91] =
 
 {

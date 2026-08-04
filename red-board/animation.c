@@ -7,13 +7,16 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <math.h>
 
 #include "tm4c123gh6pm.h"
 #include "animation.h"
 #include "pwm.h"
-#include "math_table.h"
+#include "math_tables.h"
 
 #define SCALE 32767
+#define ACOS_SIZE 1024
+#define ATAN_SIZE 1024
 
 int32_t ipow(int32_t base, uint32_t exp)
 {
@@ -117,7 +120,7 @@ void servoSetPulseWidthUs(Servo* s, uint32_t us)
 
 }
 
-void servoSetPos(Servo* s, uint16_t x, uint16_t y)
+void servoSetPos(Servo* s, float x, float y)
 {
     uint16_t L1 = 9; // 9 half inches
     uint16_t L2 = 9;
@@ -130,6 +133,8 @@ void servoSetPos(Servo* s, uint16_t x, uint16_t y)
     uint32_t K2 = (L2 * fast_sin(al)) / SCALE;
     // au = atan2(y, x) - atan2(K2, K1)
     uint32_t au = fast_atan2(y, x) - fast_atan2(K2, K1);
+
+
 }
 
 void playAnimation(Animation animation)

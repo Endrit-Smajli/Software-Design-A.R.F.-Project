@@ -306,14 +306,16 @@ Frame walk[] = {
 
 // Begin walk
 // Front-right and back-left move forward (0,1 and 4,5)
-    { 1, 1600, 2000 }, // up
-    { 5, 1600, 2000 },
-    { 0, 1700, 4000 }, // forward
-    { 4, 1700, 4000 },
-    { 1, 1500, 6000 }, // down
-    { 5, 1500, 6000 },
-    { 0, 1500, 8000 }, // back
-    { 4, 1500, 8000 },
+    { 1, 1550,  200 }, // up
+    { 5, 1550,  200 },
+    { 0, 1300,  200 }, // forward
+    { 4, 1300,  200 },
+    { 1, 1400,  400 }, // down
+    { 5, 1400,  400 },
+    { 0, 1500,  800 }, // back
+    { 4, 1500,  800 },
+    { 1, 1500,  800 },
+    { 5, 1500,  800 },
 };
 
 Animation hip_rotate_ani = {
@@ -417,7 +419,7 @@ int main(void)
     pwmEnableOutput(PWM_MOD0, PWM_PIN_3_A, true);
     pwmEnableOutput(PWM_MOD0, PWM_PIN_3_B, true);
 
-    Animation* activeAnis[8] = {&rf_push_ani, &lf_push_ani, &lb_push_ani, &rb_push_ani, 0, 0, 0, 0};
+    Animation* activeAnis[8] = {&walk_ani, 0, 0, 0, 0, 0, 0, 0};
     uint8_t currentAni = 0;
 
     while(1)
