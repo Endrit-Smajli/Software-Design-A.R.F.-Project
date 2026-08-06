@@ -12,22 +12,10 @@
 #include <stdbool.h>
 #include "pwm.h"
 
-typedef struct _Servo
-{
-    bool flip;
-    uint16_t speed;
-    uint16_t targetAngle;
-    uint16_t offset;
-
-    PWM_MOD mod;
-    PWM_GEN gen;
-    PWM_SIG sig;
-} Servo;
-
 typedef struct _Frame
 {
     uint8_t servo;
-    uint16_t angle;
+    int8_t angle;
     uint32_t time;
 } Frame;
 
@@ -37,12 +25,10 @@ typedef struct _Animation
     uint16_t frame;
     uint16_t nFrames;
     Frame* frames;
-    Servo* servos[];
+    uint32_t elapsedTime;
 } Animation;
 
-void servoSetPulseWidth(Servo* servo, uint16_t cycles);
-void playAnimation(Animation animation);
-void servoSetPulseWidthUs(Servo* s, uint32_t us);
-void servoSetAngle(Servo* s, int8_t angle);
+void playAnimation(Animation* animation);
+void updateAnimation();
 
 #endif /* ANIMATION_H_ */
