@@ -55,6 +55,15 @@
 
 // Servos
 
+#define FRONT_LEFT_HIP   0
+#define FRONT_LEFT_KNEE  1
+#define FRONT_RIGHT_HIP  2
+#define FRONT_RIGHT_KNEE 3
+#define BACK_LEFT_HIP    4
+#define BACK_LEFT_KNEE   5
+#define BACK_RIGHT_HIP   6
+#define BACK_RIGHT_KNEE  7
+
 // Hips
 Servo s0 = {
     false,
@@ -136,6 +145,14 @@ Servo s7 = {
     PWM_MOD0,
     PWM_GEN3,
     PWM_SIGB
+};
+
+Servo* servos[] = {
+//  hip, knee
+    &s0, &s4, // Front Left
+    &s1, &s5, // Front Right
+    &s2, &s6, // Back  Right
+    &s3, &s7  // Back  Left
 };
 
 // Animation
@@ -371,6 +388,36 @@ Animation walk_ani = {
     }
 };
 
+Frame ang_push[] = {
+    { FRONT_LEFT_HIP,  0, 0 },
+    { FRONT_RIGHT_HIP, 0, 0 },
+    { BACK_LEFT_HIP,   0, 0 },
+    { BACK_RIGHT_HIP,  0, 0 },
+
+    { FRONT_LEFT_HIP,  30, 1000 },
+    { FRONT_RIGHT_HIP, 30, 2000 },
+    { BACK_LEFT_HIP,   30, 3000 },
+    { BACK_RIGHT_HIP,  30, 4000 },
+
+    { FRONT_LEFT_HIP,  45, 5000 },
+    { FRONT_RIGHT_HIP, 45, 6000 },
+    { BACK_LEFT_HIP,   45, 7000 },
+    { BACK_RIGHT_HIP,  45, 8000 },
+
+
+    { FRONT_LEFT_HIP,  0, 10000 },
+    { FRONT_RIGHT_HIP, 0, 10000 },
+    { BACK_LEFT_HIP,   0, 10000 },
+    { BACK_RIGHT_HIP,  0, 10000 },
+};
+
+Animation ang_push_ani = {
+    1,
+    0,
+    (sizeof(ang_push)/sizeof(Frame)),
+    ang_push
+};
+
 uint32_t msTime = 0;
 
 int main(void)
@@ -419,7 +466,7 @@ int main(void)
     pwmEnableOutput(PWM_MOD0, PWM_PIN_3_A, true);
     pwmEnableOutput(PWM_MOD0, PWM_PIN_3_B, true);
 
-    Animation* activeAnis[8] = {&walk_ani, 0, 0, 0, 0, 0, 0, 0};
+    Animation* activeAnis[8] = {&ang_push_ani, 0, 0, 0, 0, 0, 0, 0};
     uint8_t currentAni = 0;
 
     while(1)
@@ -442,9 +489,8 @@ int main(void)
             Frame* curFrame = &cAni->frames[cAni->frame];
             while(cAni->frame < cAni->nFrames && msTime >= curFrame->time)
             {
-                Servo* s = cAni->servos[curFrame->servo];
                 // Update servo
-                servoSetPulseWidthUs(s, curFrame->angle);
+                servoSetAngle(servos[curFrame->servo], curFrame->angle);
                 // Next frame
                 curFrame = &cAni->frames[++cAni->frame];
             }

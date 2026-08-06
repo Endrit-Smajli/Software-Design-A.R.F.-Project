@@ -43,5 +43,6 @@ typedef struct _Animation
 void servoSetPulseWidth(Servo* servo, uint16_t cycles);
 void playAnimation(Animation animation);
 void servoSetPulseWidthUs(Servo* s, uint32_t us);
+void servoSetAngle(Servo* s, int8_t angle);
 
 #endif /* ANIMATION_H_ */

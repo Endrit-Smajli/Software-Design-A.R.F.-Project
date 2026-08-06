@@ -120,6 +120,21 @@ void servoSetPulseWidthUs(Servo* s, uint32_t us)
 
 }
 
+void servoSetAngle(Servo* s, int8_t angle) // -128 to 127 degrees
+{
+    // 0 degrees is 1500us
+    // 0.15 degrees a us
+    uint16_t us = (angle * 100) / 15 + 1500; // 15 = .15
+
+    if(s->flip)
+        us = s->offset - (us - s->offset);
+    if(us < 600 || us > 2400)
+        us = s->offset;
+    uint32_t cycles = (us*10) / 16;
+
+    pwmSetCmp(s->mod, s->gen, s->sig, cycles);
+}
+
 void servoSetPos(Servo* s, float x, float y)
 {
     uint16_t L1 = 9; // 9 half inches
