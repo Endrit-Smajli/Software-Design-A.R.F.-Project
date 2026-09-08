@@ -55,50 +55,89 @@
 
 // Animation
 
-Frame ang_push[] = {
-    { FRONT_LEFT_HIP,  0, 0 },
-    { FRONT_RIGHT_HIP, 0, 0 },
-    { BACK_LEFT_HIP,   0, 0 },
-    { BACK_RIGHT_HIP,  0, 0 },
+//Frame ang_push[] = {
+//    { FRONT_LEFT_HIP,  0, 0 },
+//    { FRONT_RIGHT_HIP, 0, 0 },
+//    { BACK_LEFT_HIP,   0, 0 },
+//    { BACK_RIGHT_HIP,  0, 0 },
+//
+//    { FRONT_LEFT_HIP,  30, 1000 },
+//    { FRONT_RIGHT_HIP, 30, 2000 },
+//    { BACK_LEFT_HIP,   30, 3000 },
+//    { BACK_RIGHT_HIP,  30, 4000 },
+//
+//    { FRONT_LEFT_HIP,  45, 5000 },
+//    { FRONT_RIGHT_HIP, 45, 6000 },
+//    { BACK_LEFT_HIP,   45, 7000 },
+//    { BACK_RIGHT_HIP,  45, 8000 },
+//
+//
+//    { FRONT_LEFT_HIP,  0, 10000 },
+//    { FRONT_RIGHT_HIP, 0, 10000 },
+//    { BACK_LEFT_HIP,   0, 10000 },
+//    { BACK_RIGHT_HIP,  0, 10000 },
+//};
+//
+//Animation ang_push_ani = {
+//    .speed = 1,
+//    .frame = 0,
+//    .nFrames = (sizeof(ang_push)/sizeof(Frame)),
+//    .frames = ang_push,
+//    .elapsedTime = 0,
+//};
+//
+//Frame one_servo_test[] = {
+//    { FRONT_LEFT_HIP,   0,    0 },
+//    { FRONT_LEFT_HIP,  30, 1000 },
+//    { FRONT_LEFT_HIP,  45, 2000 },
+//    { FRONT_LEFT_HIP,  30, 3000 },
+//    { FRONT_LEFT_HIP,   0, 4000 },
+//};
+//
+//Animation one_servo_test_ani = {
+//    .speed = 1,
+//    .frame = 0,
+//    .nFrames = (sizeof(one_servo_test)/sizeof(Frame)),
+//    .frames = one_servo_test,
+//    .elapsedTime = 0
+//};
 
-    { FRONT_LEFT_HIP,  30, 1000 },
-    { FRONT_RIGHT_HIP, 30, 2000 },
-    { BACK_LEFT_HIP,   30, 3000 },
-    { BACK_RIGHT_HIP,  30, 4000 },
-
-    { FRONT_LEFT_HIP,  45, 5000 },
-    { FRONT_RIGHT_HIP, 45, 6000 },
-    { BACK_LEFT_HIP,   45, 7000 },
-    { BACK_RIGHT_HIP,  45, 8000 },
-
-
-    { FRONT_LEFT_HIP,  0, 10000 },
-    { FRONT_RIGHT_HIP, 0, 10000 },
-    { BACK_LEFT_HIP,   0, 10000 },
-    { BACK_RIGHT_HIP,  0, 10000 },
+Frame stand_still[] = {
+    { FRONT_LEFT_LEG,   3,  0, 0 },
+    { FRONT_RIGHT_LEG,  3,  0, 0 },
+    { BACK_RIGHT_LEG,   3,  2, 0 },
+    { BACK_LEFT_LEG,    3,  2, 0 },
 };
 
-Animation ang_push_ani = {
+
+Animation stand_still_ani = {
     .speed = 1,
     .frame = 0,
-    .nFrames = (sizeof(ang_push)/sizeof(Frame)),
-    .frames = ang_push,
-    .elapsedTime = 0,
+    .nFrames = (sizeof(stand_still)/sizeof(Frame)),
+    .frames = stand_still,
+    .elapsedTime = 0
 };
 
-Frame one_servo_test[] = {
-    { FRONT_LEFT_HIP,   0,    0 },
-    { FRONT_LEFT_HIP,  30, 1000 },
-    { FRONT_LEFT_HIP,  45, 2000 },
-    { FRONT_LEFT_HIP,  30, 3000 },
-    { FRONT_LEFT_HIP,   0, 4000 },
+Frame linear_test[] =
+{
+   { FRONT_LEFT_LEG,  4,   0,    0 },
+   { BACK_LEFT_LEG,   4,   0,    0 },
+
+   { FRONT_LEFT_LEG,  4,   1, 1000 },
+   { BACK_LEFT_LEG,   3,   0, 1000 },
+
+   { FRONT_LEFT_LEG,  4,  -1, 3000 },
+   { BACK_LEFT_LEG,   5,   0, 3000 },
+
+   { FRONT_LEFT_LEG,  4,   0, 4000 },
+   { BACK_LEFT_LEG,   4,   0, 4000 },
 };
 
-Animation one_servo_test_ani = {
+Animation linear_test_ani = {
     .speed = 1,
     .frame = 0,
-    .nFrames = (sizeof(one_servo_test)/sizeof(Frame)),
-    .frames = one_servo_test,
+    .nFrames = (sizeof(linear_test)/sizeof(Frame)),
+    .frames = linear_test,
     .elapsedTime = 0
 };
 
@@ -108,7 +147,7 @@ int main(void)
 
     servoInitialize();
 
-    playAnimation(&one_servo_test_ani);
+    playAnimation(&stand_still_ani);
 
     while(1)
     {

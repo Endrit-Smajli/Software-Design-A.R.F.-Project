@@ -5,6 +5,7 @@
  *      Author: taylor
  */
 
+#include "math.h"
 #include "losh-libs/gpio.h"
 #include "pwm.h"
 #include "servo.h"
@@ -53,7 +54,7 @@ Servo servos[] =
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN2,
+       PWM_GEN3,
        PWM_SIGA
    },
    { // Back right knee
@@ -62,7 +63,7 @@ Servo servos[] =
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN2,
+       PWM_GEN3,
        PWM_SIGB
    },
    { // Back left hip
@@ -71,7 +72,7 @@ Servo servos[] =
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN3,
+       PWM_GEN2,
        PWM_SIGA
    },
    { // Back left knee
@@ -80,7 +81,7 @@ Servo servos[] =
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN3,
+       PWM_GEN2,
        PWM_SIGB
    }
 };
@@ -142,7 +143,7 @@ void servoSetPulseWidth(Servo* s, uint32_t us)
     pwmSetCmp(s->mod, s->gen, s->sig, cycles);
 }
 
-void servoSetAngle(Servo* s, int8_t angle) // -128 to 127 degrees
+void servoSetAngle(Servo* s, int16_t angle)
 {
     // 0 degrees is 1500us
     // 0.15 degrees a us
@@ -172,6 +173,13 @@ void servoSetPos(Servo* s, float x, float y)
 //    uint32_t K2 = (L2 * fast_sin(al)) / SCALE;
 //    // au = atan2(y, x) - atan2(K2, K1)
 //    uint32_t au = fast_atan2(y, x) - fast_atan2(K2, K1);
+
+    float b = 4.5;
+    float a = 4.5;
+    float h  = hypotf(x,y);
+    float aB = acosf( (b*b - a*a - h*h) / (2*a*h) );
+    float aH = acosf( (h*h - a*a - b*b) / (2*a*b) );
+    float ap = atan2f(x, y);
 
 
 }

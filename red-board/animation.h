@@ -12,10 +12,18 @@
 #include <stdbool.h>
 #include "pwm.h"
 
+typedef enum {
+    FRONT_LEFT_LEG,
+    FRONT_RIGHT_LEG,
+    BACK_RIGHT_LEG,
+    BACK_LEFT_LEG
+} Leg;
+
 typedef struct _Frame
 {
-    uint8_t servo;
-    int8_t angle;
+    Leg leg;
+    float x;
+    float y;
     uint32_t time;
 } Frame;
 
@@ -27,6 +35,14 @@ typedef struct _Animation
     Frame* frames;
     uint32_t elapsedTime;
 } Animation;
+
+typedef struct
+{
+    int hipServo;
+    int kneeServo;
+    float cX;
+    float cY;
+} LegData;
 
 void playAnimation(Animation* animation);
 void updateAnimation();

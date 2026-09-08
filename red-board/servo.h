@@ -35,6 +35,6 @@ extern Servo servos[8];
 
 void servoInitialize();
 void servoSetPulseWidth(Servo* servo, uint32_t cycles);
-void servoSetAngle(Servo* s, int8_t angle);
+void servoSetAngle(Servo* s, int16_t angle);
 
 #endif /* SERVO_H_ */
