@@ -1,4 +1,4 @@
-from flask import Flask, Response   # HTTP endpoints, stream MJPEG frames.
+from flask import Flask, Response, render_template_string   # HTTP endpoints, stream MJPEG frames.
 import cv2                          # JPEG encoding and box drawing.
 import json                         # Convert tracking dictionaries to JSON for ROS2 publishing.
 import threading                    # Run ROS2 in a background thread while the Flask server runs in the main thread.
@@ -75,7 +75,7 @@ class FlaskServer:
             "rgb": None,
             "yolo": None,
             "track": None,
-            "Unified": None
+            "unified": None
         }
         
         # Tell Flask clients when a new frame is available for streaming.
@@ -87,6 +87,8 @@ class FlaskServer:
         # Register all Flask endpoints (routes) for streaming video and tracking data.
         self._register_routes()
 
+        self.processing_thread = threading.Thread(target = self._processing_loop, daemon = True)
+        
         # Start ROS2 publisher in a background thread.
         self.processing_thread.start() 
     
@@ -146,7 +148,7 @@ class FlaskServer:
             
             display: grid;
             
-            grig-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr 1fr;
             grid-template-rows: 1fr 1fr;
             
             gap: 4px;
@@ -331,9 +333,14 @@ class FlaskServer:
         
         while True:
             
-            frame = q_rgb.get().getCvFrame()  # Get RGB frame
+            in_rgb = q_rgb.tryGet()     # Get RGB frame (non-blocking)
             
-            in_nn = q_nn.tryGet()             # Get YOLO detections (non-blocking)
+            if in_rgb is None:
+                continue
+            
+            frame = in_rgb.getCvFrame() # Convert DepthAI frame to OpenCV format
+            
+            in_nn = q_nn.tryGet()       # Get YOLO detections (non-blocking)
             
             if in_nn is not None:
                 detections = in_nn.detections
@@ -391,7 +398,6 @@ class FlaskServer:
         
         while True:
             
-            
             with self.frame_condition:
                 
                 # Wait for a new frame to be available
@@ -399,14 +405,14 @@ class FlaskServer:
                 
             
             # Get requested stream
-            chunck = self.latest_frames.get(stream_name)
+            chunk = self.latest_frames.get(stream_type)
 
             # Remember this frame number
-            latest_frame_number = self.frame_number
+            last_frame_number = self.frame_number
             
-        # Send JPEG frame to browser
-        if chunk:
-            yield chunk
+            # Send JPEG frame to browser
+            if chunk:
+                yield chunk
             
             
     # # -----------------------------
