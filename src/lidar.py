@@ -2,6 +2,34 @@
 import cv2
 import numpy as np
 from path_planning import plan_path
+from robot_movement import stop, follow_next_step
+
+
+def autonomous_navigation(goal):
+    while True:
+        # 1. Get the latest sensor measurements
+        scan_data = scan()
+
+        # 2. Build/update the map
+        occupancy_grid = build_map(scan_data)
+
+        # 3. Determine the robot's current position
+        start = get_robot_position()
+
+        # 4. Calculate a route
+        path = plan_path(occupancy_grid, start, goal)
+
+        if path is None:
+            stop()
+            print("No route available; rescanning.")
+            continue
+
+        # 5. Move only one short step, then reassess
+        safe = follow_next_step(path, scan_data)
+
+        if not safe:
+            stop()
+            continue
 
 path = plan_path(occupancy_grid, start, goal)
 
