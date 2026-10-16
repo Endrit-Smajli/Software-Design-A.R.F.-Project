@@ -1,7 +1,14 @@
 # NAVIGATION FOR THE ROBOT WHERE THE LIDAR SCANS THE ROOM FOR OBJECTS 
 import cv2
 import numpy as np
+from path_planning import plan_path
 
+path = plan_path(occupancy_grid, start, goal)
+
+if path is None:
+    print("No safe route found")
+else:
+    print("Planned route:", path)
 
 class RoomNavigator:
     def __init__(self):
