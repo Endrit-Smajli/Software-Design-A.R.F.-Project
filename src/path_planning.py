@@ -1,5 +1,5 @@
+# THIS IS THE PATH COMPUTATION TO WHERE IT USES A* SEARCH TO DETERMINE IF THE ROBOT HAS A SAFE PATH TO TRAVERSE
 import heapq
-
 
 def plan_path(occupancy_grid, start, goal):
     """
