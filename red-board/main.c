@@ -49,66 +49,18 @@
 #include "losh-libs/clock.h"
 #include "losh-libs/gpio.h"
 #include "losh-libs/wait.h"
+#include "losh-libs/uart0.h"
 #include "pwm.h"
 #include "animation.h"
 #include "servo.h"
-
-// Animation
-
-//Frame ang_push[] = {
-//    { FRONT_LEFT_HIP,  0, 0 },
-//    { FRONT_RIGHT_HIP, 0, 0 },
-//    { BACK_LEFT_HIP,   0, 0 },
-//    { BACK_RIGHT_HIP,  0, 0 },
-//
-//    { FRONT_LEFT_HIP,  30, 1000 },
-//    { FRONT_RIGHT_HIP, 30, 2000 },
-//    { BACK_LEFT_HIP,   30, 3000 },
-//    { BACK_RIGHT_HIP,  30, 4000 },
-//
-//    { FRONT_LEFT_HIP,  45, 5000 },
-//    { FRONT_RIGHT_HIP, 45, 6000 },
-//    { BACK_LEFT_HIP,   45, 7000 },
-//    { BACK_RIGHT_HIP,  45, 8000 },
-//
-//
-//    { FRONT_LEFT_HIP,  0, 10000 },
-//    { FRONT_RIGHT_HIP, 0, 10000 },
-//    { BACK_LEFT_HIP,   0, 10000 },
-//    { BACK_RIGHT_HIP,  0, 10000 },
-//};
-//
-//Animation ang_push_ani = {
-//    .speed = 1,
-//    .frame = 0,
-//    .nFrames = (sizeof(ang_push)/sizeof(Frame)),
-//    .frames = ang_push,
-//    .elapsedTime = 0,
-//};
-//
-//Frame one_servo_test[] = {
-//    { FRONT_LEFT_HIP,   0,    0 },
-//    { FRONT_LEFT_HIP,  30, 1000 },
-//    { FRONT_LEFT_HIP,  45, 2000 },
-//    { FRONT_LEFT_HIP,  30, 3000 },
-//    { FRONT_LEFT_HIP,   0, 4000 },
-//};
-//
-//Animation one_servo_test_ani = {
-//    .speed = 1,
-//    .frame = 0,
-//    .nFrames = (sizeof(one_servo_test)/sizeof(Frame)),
-//    .frames = one_servo_test,
-//    .elapsedTime = 0
-//};
+#include "gpt.h"
 
 Frame stand_still[] = {
-    { FRONT_LEFT_LEG,   3,  0, 0 },
-    { FRONT_RIGHT_LEG,  3,  0, 0 },
-    { BACK_RIGHT_LEG,   3,  2, 0 },
-    { BACK_LEFT_LEG,    3,  2, 0 },
+    { FRONT_LEFT_LEG,   0,  -7, 0 },
+    { FRONT_RIGHT_LEG,  0,  -7, 0 },
+    { BACK_RIGHT_LEG,  -2,  -7, 0 },
+    { BACK_LEFT_LEG,   -2,  -7, 0 },
 };
-
 
 Animation stand_still_ani = {
     .speed = 1,
@@ -141,17 +93,66 @@ Animation linear_test_ani = {
     .elapsedTime = 0
 };
 
+Frame walk[] = {
+    { FRONT_LEFT_LEG,   0,  -7, 0 },
+    { FRONT_RIGHT_LEG,  0,  -7, 0 },
+    { BACK_RIGHT_LEG,   0,  -7, 0 },
+    { BACK_LEFT_LEG,    0,  -7, 0 },
+
+    { FRONT_LEFT_LEG,   2,   -5, 4000 }, // Forward
+    { BACK_RIGHT_LEG,   2,   -5, 4000 },
+
+    { FRONT_RIGHT_LEG,  0,   -7, 4000 }, // Move other legs
+    { BACK_LEFT_LEG,    0,   -7, 4000 },
+
+    { FRONT_LEFT_LEG,   0,  -7, 8000 }, // back
+    { BACK_RIGHT_LEG,   0,  -7, 8000 },
+
+    { FRONT_LEFT_LEG,   0,  -7, 8000 },
+    { FRONT_RIGHT_LEG,  0,  -7, 8000 },
+    { BACK_RIGHT_LEG,   0,  -7, 8000 },
+    { BACK_LEFT_LEG,    0,  -7, 8000 },
+};
+
+Animation walk_ani = {
+    .speed = 1,
+    .frame = 0,
+    .nFrames = (sizeof(walk)/sizeof(Frame)),
+    .frames = walk,
+    .elapsedTime = 0
+};
+
+Frame leg_out[] = {
+    { FRONT_RIGHT_LEG, 0, -7, 4000 },
+    { FRONT_RIGHT_LEG, 0, -5, 4000 },
+//    { FRONT_RIGHT_LEG, 0, -7, 8000 },
+};
+
+Animation legout_ani = {
+    .speed = 1,
+    .frame = 0,
+    .nFrames = (sizeof(leg_out)/sizeof(Frame)),
+    .frames = leg_out,
+    .elapsedTime = 0,
+};
+
 int main(void)
 {
     initSystemClockTo40Mhz();
 
     servoInitialize();
 
-    playAnimation(&stand_still_ani);
+    initUart0();
+    setUart0BaudRate(115200, 40e6);
+
+    playAnimation(&legout_ani);
+    initGpt0();
 
     while(1)
     {
-        updateAnimation();
-        waitMicrosecond(1000);
+        //updateAnimation();
+        //waitMicrosecond(1000);
+        if(kbhitUart0())
+            putcUart0(getcUart0());
     }
 }

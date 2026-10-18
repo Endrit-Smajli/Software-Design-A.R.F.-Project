@@ -14,10 +14,10 @@
 #define FRONT_LEFT_KNEE  1
 #define FRONT_RIGHT_HIP  2
 #define FRONT_RIGHT_KNEE 3
-#define BACK_LEFT_HIP    4
-#define BACK_LEFT_KNEE   5
-#define BACK_RIGHT_HIP   6
-#define BACK_RIGHT_KNEE  7
+#define BACK_LEFT_HIP    6
+#define BACK_LEFT_KNEE   7
+#define BACK_RIGHT_HIP   4
+#define BACK_RIGHT_KNEE  5
 
 typedef struct _Servo
 {

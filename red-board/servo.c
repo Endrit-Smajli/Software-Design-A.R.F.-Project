@@ -22,7 +22,7 @@ Servo servos[] =
        PWM_SIGA
    },
    { // Forward left knee
-       false,
+       true,
        0,
        0,
        1500,
@@ -40,7 +40,7 @@ Servo servos[] =
        PWM_SIGA
    },
    { // Forward right knee
-       true,
+       false,
        0,
        0,
        1500,
@@ -54,16 +54,16 @@ Servo servos[] =
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN3,
+       PWM_GEN2,
        PWM_SIGA
    },
    { // Back right knee
-       true,
+       false,
        0,
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN3,
+       PWM_GEN2,
        PWM_SIGB
    },
    { // Back left hip
@@ -72,16 +72,16 @@ Servo servos[] =
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN2,
+       PWM_GEN3,
        PWM_SIGA
    },
    { // Back left knee
-       false,
+       true,
        0,
        0,
        1500,
        PWM_MOD0,
-       PWM_GEN2,
+       PWM_GEN3,
        PWM_SIGB
    }
 };
