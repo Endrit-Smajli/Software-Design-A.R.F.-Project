@@ -14,12 +14,16 @@ class OakDDevice:
 
         self._build_color_camera()  # Build color camera node in the pipeline
         self._build_yolo()          # Build YOLO node in the pipeline
-
-        self.pipeline.start()  # Start the pipeline. This initializes the nodes and prepares them for execution.
+        self._build_stereo_depth()  # Build stereo depth node in the pipeline
+        
+        #self.pipeline.start()  # Start the pipeline. This initializes the nodes and prepares them for execution.
 
         # Create output queues
-        self.q_rgb = self.nn.passthrough.createOutputQueue(maxSize = 4, blocking = False)
-        self.q_nn = self.nn.out.createOutputQueue(maxSize = 4, blocking = False)
+        self.q_rgb = self.nn.passthrough.createOutputQueue(maxSize = 1, blocking = False)
+        self.q_nn = self.nn.out.createOutputQueue(maxSize = 1, blocking = False)
+        self.q_depth = self.stereo.depth.createOutputQueue(maxSize = 1, blocking = False)
+
+        self.pipeline.start()  # Start the pipeline. This initializes the nodes and prepares them for execution.
 
     # ColorCamera node to capture RGB frames from OAK-D Lite sesor.
     def _build_color_camera(self):
@@ -32,7 +36,9 @@ class OakDDevice:
         self.cam = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
         
         # Request BGR frames at the model input resolution.
-        self.cam_output = self.cam.requestOutput((512, 288), type = dai.ImgFrame.Type.BGR888p, fps = 30)
+
+        #Comented out next line (do not delete)
+        #self.cam_output = self.cam.requestOutput((512, 288), type = dai.ImgFrame.Type.BGR888p, fps = 30)
 
     # YOLO detection
     def _build_yolo(self):
@@ -50,7 +56,7 @@ class OakDDevice:
         model_description = dai.NNModelDescription("yolov6-nano")
        
         # Create detection network
-        self.nn = self.pipeline.create(dai.node.DetectionNetwork).build(self.cam_output, model_description)
+        self.nn = self.pipeline.create(dai.node.DetectionNetwork).build(self.cam, model_description, fps = 15)
        
         # Minimum confidence required for a detection
         self.nn.setConfidenceThreshold(0.5)
@@ -59,20 +65,80 @@ class OakDDevice:
         # the camera pipeline if inference temporarily falls behind.
         self.nn.input.setBlocking(False)
        
-    # Helper methods
+    # Stereo depth processing
+    def _build_stereo_depth(self):
+        """Build a stereo-depth pipeline using the OAK-D Lite mono cameras.
+
+        The OAK-D Lite uses CAM_B and CAM_C for its left and right mono sensors.
+        The 640x400 inputs match the sensors' 400p mode and limit data transfer.
+        """
+
+        self.mono_left = self.pipeline.create(dai.node.Camera).build(
+            dai.CameraBoardSocket.CAM_B
+        )
+        self.mono_right = self.pipeline.create(dai.node.Camera).build(
+            dai.CameraBoardSocket.CAM_C
+        )
+
+        self.stereo = self.pipeline.create(dai.node.StereoDepth)
+
+        left_output = self.mono_left.requestOutput((640, 400), type = dai.ImgFrame.Type.GRAY8, fps = 15)
+        right_output = self.mono_right.requestOutput((640, 400),type = dai.ImgFrame.Type.GRAY8, fps = 15)
+
+        left_output.link(self.stereo.left)
+        right_output.link(self.stereo.right)
+
+        # Rectify the stereo pair and improve handling of occluded regions.
+        self.stereo.setRectification(True)
+        self.stereo.setLeftRightCheck(True)
+        
+##        self.stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+##        self.stereo.setOutputSize(512, 288)
+    
+    # Helper methods  
     def get_rgb_frame(self):
         """
-        Get the newest RGB frame.
+        Retrieve the newest available RGB frame.
+
+        Older queued frames are discarded to help reduce
+        latency in the live camera stream.
+
         Returns:
             numpy.ndarray or None
         """
-        
-        frame = self.q_rgb.tryGet()
-        if frame is None:
-            return None
-        
-        return frame.getCvFrame()
 
+        latest_frame = self.q_rgb.tryGet()
+
+        while latest_frame is not None:
+            next_frame = self.q_rgb.tryGet()
+
+            if next_frame is None:
+                return latest_frame.getCvFrame()
+
+            latest_frame = next_frame
+
+        return None
+
+    def get_depth_frame(self):
+        """Retrieve the newest raw stereo depth frame.
+
+        Returns a 2D NumPy array of depth values in millimeters, or None
+        when no new depth frame is available. The colorized display image
+        will be created later in processors.py.
+        """
+
+        latest_depth = self.q_depth.tryGet()
+
+        while latest_depth is not None:
+            next_depth = self.q_depth.tryGet()
+
+            if next_depth is None:
+                return latest_depth.getFrame()
+
+            latest_depth = next_depth
+
+        return None
+    
     def get_detections(self):
         """
         Get the newest detection packet.
