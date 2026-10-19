@@ -1,4 +1,5 @@
-import cv2  
+import cv2
+import numpy as np
 
 # COCO class labels for YOLOv6. 
 # These are the 80 object categories that the model can detect.
@@ -83,6 +84,79 @@ COCO_LABELS = [
     "hair drier", 
     "toothbrush", 
 ]
+
+class DepthProcessor:
+    """Convert raw OAK-D stereo depth (millimeters) into a display image.
+
+    Values at or below zero are treated as invalid depth and shown black.
+    The default display range is 0-8 meters; nearer valid values appear
+    warmer in the TURBO color map. This class does not modify the raw frame.
+    """
+    def __init__(self, max_depth_mm = 8000):
+        self.max_depth_mm = max(1, int(max_depth_mm))
+
+    def process(self, depth_frame):
+        """Return a BGR colorized image, or None when no valid frame is given."""
+        if depth_frame is None:
+            return None
+
+        depth = np.asarray(depth_frame)
+        if depth.ndim != 2:
+            return None
+
+        depth_float = depth.astype(np.float32)
+        valid_pixels = depth_float > 0
+
+        # Invert the scale so nearer valid objects map to warmer colors.
+        clipped_depth = np.clip(depth_float, 0, self.max_depth_mm)
+        intensity = (255.0 * (1.0 - clipped_depth / self.max_depth_mm)). astype(np.uint8)
+        intensity[~valid_pixels] = 0
+
+        colorized = cv2.applyColorMap(intensity, cv2.COLORMAP_TURBO)
+        colorized[~valid_pixels] = (0, 0, 0)
+
+        cv2.putText(
+            colorized,
+            f"Depth view | range: 0-{self.max_depth_mm / 1000:.1f} m",
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+        return colorized
+
+    def distance_m(self, depth_frame, track, rgb_shape):
+        """Median distance (meters) in the center of a track's box, or None."""
+        if depth_frame is None or depth_frame.ndim != 2:
+            return None
+
+        rgb_h, rgb_w = rgb_shape[:2]
+        dh, dw = depth_frame.shape
+        sx, sy = dw / rgb_w, dh / rgb_h
+
+        # Use the central 50% of the box to avoid background at the edges.
+        cx = (track["x1"] + track["x2"]) / 2
+        cy = (track["y1"] + track["y2"]) / 2
+        hw = (track["x2"] - track["x1"]) * 0.25
+        hh = (track["y2"] - track["y1"]) * 0.25
+
+        x1 = int(max(0, (cx - hw) * sx))
+        x2 = int(min(dw, (cx + hw) * sx) + 1)
+        y1 = int(max(0, (cy - hh) * sy))
+        y2 = int(min(dh, (cy + hh) * sy) + 1)
+
+        roi = depth_frame[y1:y2, x1:x2]
+        valid = roi[roi > 0]
+
+        if valid.size < 10: # too few valid pixels to trust
+            return None
+
+        return float(np.median(valid)) / 1000.0
+
+    
 # Helper class to draw bounding boxes and labels on frames.
 class YoloDrawer:
     """
@@ -241,7 +315,7 @@ class SimpleSortTracker:
             if 0 <= label_id < len(COCO_LABELS):
                 return COCO_LABELS[label_id]
         except (TypeError, ValueError):
-            pass
+            return str(label_id)
             
         return str(label_id)  # Fallback to string representation if label ID is invalid.
 
@@ -285,19 +359,18 @@ class SimpleSortTracker:
             
             for track_id, track in self.tracks.items():
                 
-                # A track cannot be used twice in the same frame.
-                if track_id in matched_track_ids:
-                    continue
-                
-                # Only match the same object class.
-                if track["label_id"] != detection["label_id"]:
-                    continue
-                
-                distance = self._distance(track, detection)
-                
-                if distance < best_distance:
-                    best_distance = distance
-                    best_track_id = track_id
+                # Only consider tracks that have not already been matched
+                # and belong to the same object class.
+                if (
+                    track_id not in matched_track_ids
+                    and track["label_id"] == detection["label_id"]
+                ):
+
+                    distance = self._distance(track, detection)
+
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_track_id = track_id
             
             # Existing track found
             if best_track_id is not None:
@@ -391,6 +464,60 @@ class SimpleSortTracker:
                 2
             )
         return frame  # Return modified frame with tracking boxes and IDs.
+
+    # Unified Yolo + Tracker Drawing
+    def _draw_unified(self, frame, tracks):
+        """
+        Draw one bounding box per tracked object.
+
+        Each box displays:
+            - YOLO class
+            - YOLO confidence
+            - Tracker ID
+        """
+
+        if frame is None:
+            return frame
+
+        for track in tracks:
+
+            x1 = track["x1"]
+            y1 = track["y1"]
+            x2 = track["x2"]
+            y2 = track["y2"]
+
+            track_id = track["id"]
+            label = track["label"]
+            confidence = track["conf"]
+
+            # One bounding box
+            cv2.rectangle(
+                frame,
+                (x1, y1),
+                (x2, y2),
+                (255, 0, 0),
+                2
+            )
+
+            # Combined information
+            text = f"{label} | ID: {track_id} | {confidence:.2f}"
+            if track.get("distance_m") is not None:
+                text += f" | {track['distance_m']:.2f} m"
+
+            # Keep text inside the image
+            text_y = max(y1 - 10, 20)
+
+            cv2.putText(
+                frame,
+                text,
+                (x1, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 0, 0),
+                2
+            )
+            
+        return frame
     
     # Backwards-compatible draw method
     def draw(self, frame, tracks):
