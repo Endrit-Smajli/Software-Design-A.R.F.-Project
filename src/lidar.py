@@ -2,7 +2,7 @@
 import cv2
 import numpy as np
 from path_planning import plan_path
-from robot_movement import stop, follow_next_step
+from movement import stop, follow_next_step
 
 
 def autonomous_navigation(goal):

@@ -90,12 +90,22 @@ class FlaskServer:
 
         # Limit dashboard image refresh to reduce CPU/network overhead.
         # Perception/tracking and ROS 2 publishing still run at camera rate.
+
         self.display_interval = 1.0 / 15.0
+
 
         # Tell Flask clients when a new display frame is available.
         self.frame_number = 0
         self.frame_condition = threading.Condition()
 
+        # Track how many clients are requesting each stream
+        self.active_streams = {
+            "rgb": 0,
+            "unified": 0,
+            "depth": 0,
+        }
+        self._stop_event = threading.Event()
+        
         # Register the dashboard and stream endpoints.
         self._register_routes()
 
@@ -651,68 +661,148 @@ class FlaskServer:
     # SHARED PROCESSING LOOP
     # -----------------------------
     def _processing_loop(self):
+        
         detections = []
+        
         last_display_time = 0.0
+        last_processing_debug_time = 0.0
+        last_display_debug_time = 0.0
+        
         latest_raw_depth = None
-        latest_depth_jpeg = None
 
-        while True:
-            # Read both queues on every pass so depth data does not accumulate.
+        while not self._stop_event.is_set():
+
+            # Measure acquisition and perception processing time.
+            loop_start = time.monotonic()
+            
+            # Keep retrieving raw RGB and depth for tracking.
             frame = self.device.get_rgb_frame()
             raw_depth = self.device.get_depth_frame()
+            
             if raw_depth is not None:
                 latest_raw_depth = raw_depth
 
             if frame is None:
                 time.sleep(0.001)
             else:
-                # Use the most recent detection packet available.
+                # Use the newest available detection packet.
                 in_nn = self.device.q_nn.tryGet()
+                
                 if in_nn is not None:
                     detections = in_nn.detections
 
-                # Update tracking and ROS 2 data at camera rate.
+                # Keep tracking and distance updates running.
                 tracks = self.tracker.update(detections, frame.shape)
 
                 for t in tracks:
                     t["distance_m"] = self.depth_processor.distance_m(
                         latest_raw_depth, t, frame.shape
                     )
+                    
                 node = self.ros_holder.get("node")
+                
                 if node is not None:
                     node.latest_tracks = tracks
 
-                # Only encode dashboard images at 15 FPS. Tracking and ROS 2
-                # updates above continue at the camera's processing rate.
+                # Diagnose acquisition, tracking, and ROS processing.
+                processing_elapsed = time.monotonic() - loop_start
+                debug_now = time.monotonic()
+
+                # Report slow iterations at most once per second.
+                if (
+                    processing_elapsed > self.display_interval
+                    and debug_now - last_processing_debug_time >= 1.0
+                ):
+                    print(
+                        f"Acquisition/tracking/ROS took "
+                        f"{processing_elapsed * 1000:.0f} ms)"
+                        f"(target: {self.display_interval * 1000:.0f} ms)"
+                    )
+                    
+                    last_processing_debug_time = debug_now
+                    
+                # Limit dashboard frame generation to the configured rate.
                 now = time.monotonic()
+                
                 if now - last_display_time >= self.display_interval:
-                    rgb_frame = frame.copy()
-                    unified_frame = self.tracker._draw_unified(frame.copy(), tracks)
-                    depth_frame = self.depth_processor.process(latest_raw_depth)
 
-                    rgb_jpeg = self._encode_jpeg(rgb_frame)
-                    unified_jpeg = self._encode_jpeg(unified_frame)
+                    # Start measuring dashboard rendering and encoding time
+                    display_start = time.monotonic()
+                    
+                    # Read the ative viewer counts under the shared lock.
+                    with self.frame_condition:
+                        active_rgb = self.active_streams["rgb"] > 0
+                        active_unified = self.active_streams["unified"] > 0
+                        active_depth = self.active_streams["depth"] > 0
+
+                    # Render only the views currently being requested.   
+                    rgb_frame = frame.copy() if active_rgb else None
+
+                    unified_frame = None
+
+                    if active_unified:
+                        
+                        unified_frame = self.tracker._draw_unified(
+                            frame.copy(),
+                            tracks
+                        )
+
+                    depth_frame = None
+
+                    if active_depth:
+                        
+                        depth_frame = self.depth_processor.process(
+                            latest_raw_depth
+                        )
+                        
+                    # Encode each requested view once for all its clients.
+                    rgb_jpeg = None
+
+                    if rgb_frame is not None:
+                        rgb_jpeg = self._encode_jpeg(rgb_frame)
+
+                    unified_jpeg = None
+                    
+                    if unified_frame is not None:
+                        unified_jpeg = self._encode_jpeg(unified_frame)
+
+                    
+                    depth_jpeg = None
+                    
                     if depth_frame is not None:
-                        encoded_depth = self._encode_jpeg(depth_frame)
-                        if encoded_depth is not None:
-                            latest_depth_jpeg = encoded_depth
+                        depth_jpeg = self._encode_jpeg(depth_frame)
 
+                    # Diagnose slow rendering and JPEG encoding.
+                    display_elapsed = time.monotonic() - display_start
+                    debug_now = time.monotonic()
+                    
+                    # Report unusually slow dashpboard updates.
+                    if display_elapsed > self.display_interval:
+                        print(
+                            f"Dashboard rendering/encoding took "
+                            f" {display_elapsed * 1000:.1f} ms"
+                            f"(target: {self.display_interval * 1000:.0f} ms)"
+                        )
+
+                    last_display_debug_time = debug_now
+                        
+                    # Publish the latest frames and wake waiting stream clients.
                     with self.frame_condition:
                         self.latest_frames = {
                             "rgb": rgb_frame,
                             "unified": unified_frame,
                             "depth": depth_frame,
                         }
+                        
                         self.latest_jpegs = {
                             "rgb": rgb_jpeg,
                             "unified": unified_jpeg,
-                            "depth": latest_depth_jpeg,
+                            "depth": depth_jpeg,
                         }
                         self.frame_number += 1
                         self.frame_condition.notify_all()
 
                     last_display_time = now
-
 
     # SHARED MJPEG GENERATOR
     def _gen_shared(self, stream_type):
@@ -720,37 +810,68 @@ class FlaskServer:
         # Keep track of which frame the browser has already recieved
         last_frame_number = -1
 
-        while True:
+        # Register this client as an active viewer.
+        with self.frame_condition:
             
-            with self.frame_condition:
-                
-                # Wait for a new frame to be available
-                self.frame_condition.wait_for(
-                    lambda: self.frame_number != last_frame_number
-                )
-                
-                jpeg_bytes = self.latest_jpegs.get(stream_type)
+            self.active_streams[stream_type] += 1
 
-                current_frame_number = self.frame_number
+        try:
+            while not self._stop_event.is_set():
 
-            last_frame_number = current_frame_number
+            
+                with self.frame_condition:
+                    
+                    # Wait until a new frame is available or shutdown begins.
+                    self.frame_condition.wait_for(
+                        lambda: (
+                            self.frame_number != last_frame_number
+                            or self._stop_event.is_set()
+                        )
+                    )
 
-            if jpeg_bytes is not None:
+                    if self._stop_event.is_set():
+                        return
+                    
+                    jpeg_bytes = self.latest_jpegs.get(stream_type)
 
-                chunk = (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: " +
-                    str(len(jpeg_bytes)).encode() +
-                    b"\r\n\r\n" +
-                    jpeg_bytes +
-                    b"\r\n"
-                )
+                    current_frame_number = self.frame_number
+
+                last_frame_number = current_frame_number
+
+                if jpeg_bytes is not None:
+
+                    chunk = (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " 
+                        + str(len(jpeg_bytes)).encode() 
+                        + b"\r\n\r\n"
+                        + jpeg_bytes
+                        + b"\r\n"
+                    )
         
-                yield chunk
+                    yield chunk
 
+        finally:
+            
+            # Unregister the client when its stream ends.
+            with self.frame_condition:
+                self.active_streams[stream_type] = max(
+                    0, self.active_streams[stream_type] -1
+                )
+
+                self.frame_condition.notify_all()
+
+    def stop(self):
+        self._stop_event.set()
+
+        # Wake stream generators that are waiting for another frame.
+        with self.frame_condition:
+            self.frame_condition.notify_all()
+    
+        self.processing_thread.join(timeout = 3)
     # -----------------------------
     # START Flask SERVER
     # -----------------------------
     def start(self):
-        app.run(host="0.0.0.0", port=5000, threaded=True)
+        app.run(host = "0.0.0.0", port = 5000, threaded = True)
