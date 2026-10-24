@@ -1,14 +1,23 @@
-from flask import Flask, Response, render_template_string   # HTTP endpoints, stream MJPEG frames.
-import cv2                          # JPEG encoding and box drawing.
-import time
+# Standard library
 import json                         # Convert tracking dictionaries to JSON for ROS2 publishing.
 import threading                    # Run ROS2 in a background thread while the Flask server runs in the main thread.
-import numpy as np
-from processors import DepthProcessor
+import time
 
-import rclpy                        
+# Third-party libaries
+import cv2                          # JPEG encoding and box drawing.
+import numpy as np
+from flask import Flask, Response, render_template_string   # HTTP endpoints, stream MJPEG frames.
+
+# ROS 2
+import rclpy
+from rclpy.context import Context
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node         # ROS2 node for publishing tracking data.
+from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String     # Tracking data published as JSON string messages.
+
+# Project modules
+from processors import DepthProcessor
 
 # Create Flask app.
 app = Flask(__name__)
@@ -19,10 +28,10 @@ app = Flask(__name__)
 class RosTrackPublisher(Node):
     
     # Initialize ROS2 node.
-    def __init__(self):
+    def __init__(self, context = None):
         
         # Node name is 'oakd_tracks', which will be used in ROS2 to identify this node.
-        super().__init__('oakd_tracks')
+        super().__init__('oakd_tracks', context = context)
         
         # Create ROS2 publisher. 
         # - Topic: /tracked_objects
@@ -45,16 +54,47 @@ class RosTrackPublisher(Node):
 
 # Run ROS2 publisher in a background thread so that it doesn't block the Flask server.
 def start_ros_publisher(publisher_holder):
-    
-    rclpy.init()                    # Initialize ROS2 system
-    node = RosTrackPublisher()      # Create ROS2 node
-    publisher_holder["node"] = node # Store node in a shared dictionary to update `latest_tracks` from the Flask server.
-    rclpy.spin(node)                # Start ROS2 event loop
-    
-    # Clean up ROS2 resources when the thread is stopped.
-    node.destroy_node()            
-    rclpy.shutdown()
 
+    context = Context()
+    node = None
+    executor = None
+
+    try:
+        # Give this publisher its own ROS 2 context.
+        rclpy.init(
+            context = context,
+            signal_handler_options = SignalHandlerOptions.NO
+        )
+        
+    #rclpy.init()                    # Initialize ROS2 system
+    node = RosTrackPublisher(context = context)      # Create ROS2 node
+    publisher_holder["node"] = node # Store node in a shared dictionary to update `latest_tracks` from the Flask server.
+
+    executor = SingleThreadedExecutor(context = context)
+    executor.add_node(node)
+
+    # Check the shutdown signal regularly.
+    while context.ok() and not stop_event.is_set():
+        executor.spin_once(timeout_sec = 0.1)
+
+finally:
+    # Stop exposing the node to the processing loop.
+    publisher_holder.pop("node", None)
+
+    if executor is not None:
+        
+        if node is not None:
+            executor.remove_node(node)
+            
+        executor.shutdown()
+
+    # Release the node's resources.
+    if node is not None:
+        executor.destroy_node()
+
+    # Shut down only this publisher's context.
+    if context.ok():
+        context.shutdown()
 
 # -----------------------------
 # Flask Server
