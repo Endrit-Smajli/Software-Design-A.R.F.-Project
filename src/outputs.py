@@ -66,35 +66,35 @@ def start_ros_publisher(publisher_holder):
             signal_handler_options = SignalHandlerOptions.NO
         )
         
-    #rclpy.init()                    # Initialize ROS2 system
-    node = RosTrackPublisher(context = context)      # Create ROS2 node
-    publisher_holder["node"] = node # Store node in a shared dictionary to update `latest_tracks` from the Flask server.
+        #rclpy.init()                    # Initialize ROS2 system
+        node = RosTrackPublisher(context = context)      # Create ROS2 node
+        publisher_holder["node"] = node # Store node in a shared dictionary to update `latest_tracks` from the Flask server.
+    
+        executor = SingleThreadedExecutor(context = context)
+        executor.add_node(node)
+    
+        # Check the shutdown signal regularly.
+        while context.ok() and not stop_event.is_set():
+            executor.spin_once(timeout_sec = 0.1)
 
-    executor = SingleThreadedExecutor(context = context)
-    executor.add_node(node)
-
-    # Check the shutdown signal regularly.
-    while context.ok() and not stop_event.is_set():
-        executor.spin_once(timeout_sec = 0.1)
-
-finally:
-    # Stop exposing the node to the processing loop.
-    publisher_holder.pop("node", None)
-
-    if executor is not None:
-        
-        if node is not None:
-            executor.remove_node(node)
+    finally:
+        # Stop exposing the node to the processing loop.
+        publisher_holder.pop("node", None)
+    
+        if executor is not None:
             
-        executor.shutdown()
-
-    # Release the node's resources.
-    if node is not None:
-        executor.destroy_node()
-
-    # Shut down only this publisher's context.
-    if context.ok():
-        context.shutdown()
+            if node is not None:
+                executor.remove_node(node)
+                
+            executor.shutdown()
+    
+        # Release the node's resources.
+        if node is not None:
+            executor.destroy_node()
+    
+        # Shut down only this publisher's context.
+        if context.ok():
+            context.shutdown()
 
 # -----------------------------
 # Flask Server
