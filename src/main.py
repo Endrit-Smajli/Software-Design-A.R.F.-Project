@@ -13,12 +13,15 @@ if __name__ == "__main__":
     ros_holder = {}
 
     # Signals the publisher thread to stop.
-    ros_stop_event = threading.Event()
+    ros_stop_event = ros_holder.setdefault(
+        "stop_event",
+        threading.Event()
+    )
     
     # Create a background thread to run ROS2 publisher so that it doesn't block the Flask server.
     ros_thread = threading.Thread(
         target = start_ros_publisher,
-        args=(ros_holder, ros_stop_event),
+        args=(ros_holder, ),
         daemon = False)
 
     server = None
