@@ -117,7 +117,7 @@ def start_ros_publisher(publisher_holder, stop_event=None):
     
         # Release the node's resources.
         if node is not None:
-            executor.destroy_node()
+            node.destroy_node()
     
         # Shut down only this publisher's context.
         if context.ok():
@@ -845,7 +845,7 @@ class FlaskServer:
 
         cv2.putText(
             image,
-            f"RViz-style LaserScan | /scan | grid: +/-{display_range:.1f} m",
+            f"LaserScan | /scan | grid: +/-{display_range:.1f} m",
             (10, 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.43,
