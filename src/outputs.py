@@ -185,7 +185,394 @@ class FlaskServer:
         def dashboard():
 
             return render_template_string("""
-                        function createCameraPanel(viewer, index, view)
+           <!DOCTYPE html>
+
+        <html>
+
+        <head>
+
+            <meta name = "viewport"
+                content = "width=device-width, initial-scale = 1.0">
+            <title>A.R.F Camera Dashboard</title>
+
+            <style>
+
+                * {
+                    box-sizing: border-box;
+                }
+
+                html, body {
+                    margin: 0;
+                    padding: 0;
+                    width: 100%;
+                    height: 100%;
+                }
+
+                body {
+                    background: #111;
+                    color: white;
+                    font-family: Arial, sans-serif;
+                    overflow: hidden;
+                }
+
+                /* --------------------------------
+                   Header
+                -------------------------------- */
+
+                .header {
+                    height: 60px;
+
+                    display: flex;
+                    align-items: center;
+
+                    padding: 0 16px;
+
+                    background: #1b1b1b;
+
+                    font-size: 20px;
+                    font-weight: bold;
+                }
+
+
+                /* --------------------------------
+                   Control buttons
+                -------------------------------- */
+
+                .controls {
+                    height: 55px;
+
+                    display: flex;
+                    align-items: center;
+
+                    gap: 10px;
+
+                    padding: 8px 16px;
+
+                    background: #222;
+                }
+
+                .controls button {
+
+                    padding: 8px 16px;
+
+                    border: none;
+                    border-radius: 4px;
+
+                    background: #444;
+                    color: white;
+
+                    cursor: pointer;
+
+                    font-size: 14px;
+                }
+
+                .controls button:hover {
+                    background: #555;
+                }
+
+                .controls button.active {
+                    background: #666;
+                }
+
+
+                /* --------------------------------
+                   Display area
+                -------------------------------- */
+
+                .viewer {
+
+                    width: 100%;
+                    height: calc(100vh - 115px);
+
+                    display: grid;
+                    gap: 5px;
+
+                    background: black;
+                    padding: 6px;
+
+                    overflow: hidden;
+                    box-sizing: border-box;
+                }
+
+
+                /* --------------------------------
+                   Individual display panels
+                -------------------------------- */
+
+                .panel {
+
+                    position: relative;
+
+                    min-width: 0;
+                    min-height: 0;
+
+                    background: black;
+
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+
+                    overflow: hidden;
+                }
+
+                .panel img {
+                    width: 100%;
+                    height: 100%;
+
+                    object-fit: contain;
+
+                    display: block;
+                }
+                
+                /* --------------------------------
+                   Individual control panels
+                -------------------------------- */
+                .panel-controls {
+                    position: absolute;
+
+                    top: 8px;
+
+                    right: 8px;
+
+                    z-index: 10;
+                }
+
+                .view-select {
+
+                    background-color: #34495e;
+                    color: white;
+
+                    border: 1px solid #607d8b;
+                    border-radius: 6px;
+
+                    padding: 7px 12px;
+
+                    font-size: 14px;
+                    font-weight: 500;
+
+                    cursor: pointer;
+                }
+
+                .view-select option {
+                    background-color: #34495e;
+                    color: white;
+                }
+                
+                /* --------------------------------
+                   Camera image
+                -------------------------------- */
+
+                .panel img {
+
+                    width: 100%;
+                    height: 100%;
+
+                    object-fit: contain;
+
+                    display: block;
+                }
+
+                @media (max-width: 768px) {
+
+                    .viewer {
+                        height: calc(100vh - 130px);
+
+                        display: grid;
+
+                        grid-template-columns: 1fr !important;
+                        grid-template-rows: none !important;
+
+                        grid-auto-rows: minmax(45vh, auto) !important;
+                        
+                        gap: 4px;
+                        padding: 4px;
+
+                        overflow-y: auto;
+                    }
+
+                    .panel {
+                        width: 100%;
+                        min-width: 0;
+                        min-height: 45vh;
+                    }
+
+                    .panel-controls {
+                        top: 6px;
+                        left: 6px;
+                    }
+
+                    .view-select {
+                        font-size: 14px;
+                        padding: 6px 8px;
+                    }
+                }
+                    
+                /* --------------------------------
+                   Display label
+                -------------------------------- */
+
+                .label {
+
+                    position: absolute;
+
+                    top: 10px;
+                    left: 10px;
+
+                    padding: 6px 10px;
+
+                    background: rgba(0, 0, 0, 0.7);
+
+                    border-radius: 4px;
+
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+
+
+                /* --------------------------------
+                   LiDAR placeholder
+                -------------------------------- */
+
+                .lidar-placeholder {
+
+                    width: 100%;
+                    height: 100%;
+
+                    display: flex;
+
+                    align-items: center;
+                    justify-content: center;
+
+                    background: #050505;
+
+                    color: #888;
+
+                    font-size: 24px;
+                }
+
+            </style>
+
+            
+
+        </head>
+
+
+        <body>
+
+
+            <!-- Header -->
+
+            <div class="header">
+
+                A.R.F Camera Dashboard (Front, OAK-D Lite)
+
+            </div>
+
+
+            <!-- Buttons -->
+
+            <div class="controls">
+
+                <span class = "control-title">Number of Views:
+
+                </span>
+
+                <button onclick = "setViewCount(1, this)" class = "active">
+                    1
+                </button>
+
+                <button onclick = "setViewCount(2, this)">
+                    2
+                </button>
+                
+                <button onclick = "setViewCount(3, this)">
+                    3
+                </button>
+
+                <button onclick = "setViewCount(4, this)">
+                    4
+                </button>
+                
+            </div>
+
+
+            <!-- Display area -->
+
+            <div
+                id = "viewer"
+                class = "viewer">
+
+            </div>
+
+
+            <script>
+
+                const viewNames = {
+                    rgb: "RGB",
+                    unified: "Unified",
+                    depth: "Depth",
+                    lidar: "LiDAR"
+                };
+
+                let viewCount = 1;
+
+                let selectedViews = [
+                    "rgb",
+                    "unified",
+                    "depth",
+                    "lidar"
+                ];
+
+                function setViewCount(count, button)
+                {
+                    viewCount = count;
+
+                    const buttons = document.querySelectorAll(".controls button");
+
+                    buttons.forEach(function(item)
+                    {
+                        item.classList.remove("active");
+                    });
+
+                    button.classList.add("active");
+
+                    updateViewer();
+                }
+
+                function updateViewer()
+                {
+                    const viewer = document.getElementById("viewer");
+
+                    viewer.innerHTML = "";
+
+                    if (viewCount === 1)
+                    {
+                        viewer.style.gridTemplateColumns = "1fr";
+                        viewer.style.gridTemplateRows = "1fr";
+                    }
+
+                    else if (viewCount === 2)
+                    {
+                        viewer.style.gridTemplateColumns = "1fr 1fr";
+                        viewer.style.gridTemplateRows = "1fr";
+                    }
+                    else
+                    {
+                        viewer.style.gridTemplateColumns = "1fr 1fr";
+                        viewer.style.gridTemplateRows = "1fr 1fr";
+                    }
+                    
+                    for (let i = 0; i < viewCount; i++)
+                    {
+                        createCameraPanel(
+                            viewer,
+                            i,
+                            selectedViews[i]
+                        );
+                    }
+                }
+
+                function createCameraPanel(viewer, index, view)
                 {
                     const panel = document.createElement("div");
 
@@ -248,8 +635,7 @@ class FlaskServer:
 
         </html>
             """)
-        
-        
+    
         # Raw RGB frames
         @app.route("/rgb")
         def rgb_stream():
