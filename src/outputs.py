@@ -471,7 +471,7 @@ class FlaskServer:
 
             <div class="header">
 
-                A.R.F Camera Dashboard (Front, OAK-D Lite)
+                A.R.F Multi-View Dashboard 
 
             </div>
 
@@ -821,8 +821,8 @@ class FlaskServer:
 
         if valid_ranges.size:
             # ROS coordinates: X = r*cos(angle), Y = r*sin(angle).
-            point_x = center_x + valid_ranges * np.cos(valid_angles) * pixels_per_metre
-            point_y = center_y - valid_ranges * np.sin(valid_angles) * pixels_per_metre
+            point_x = center_x - valid_ranges * np.cos(valid_angles) * pixels_per_metre
+            point_y = center_y + valid_ranges * np.sin(valid_angles) * pixels_per_metre
             point_x = np.rint(point_x).astype(np.int32)
             point_y = np.rint(point_y).astype(np.int32)
             inside = (
@@ -833,7 +833,7 @@ class FlaskServer:
             )
             # Small bright scan dots closely resemble the LaserScan display in RViz.
             for px, py in zip(point_x[inside], point_y[inside]):
-                cv2.circle(image, (int(px), int(py)), 2, (70, 235, 120), -1, cv2.LINE_AA)
+                cv2.circle(image, (int(px), int(py)), 2, (255, 0, 255), -1, cv2.LINE_AA)
 
         # Draw a robot-origin marker with its forward (+X) direction.
         cv2.circle(image, center, 7, (20, 20, 20), -1, cv2.LINE_AA)
