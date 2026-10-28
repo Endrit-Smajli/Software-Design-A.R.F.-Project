@@ -15,6 +15,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node         # ROS2 node for publishing tracking data.
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String     # Tracking data published as JSON string messages.
+from sensor_msgs.msg import LaserScan   # LiDAR scan measurements from /scan
 
 # Project modules
 from processors import DepthProcessor
@@ -42,9 +43,29 @@ class RosTrackPublisher(Node):
         # Store the latest tracking data to be published.
         self.latest_tracks = [] 
         
+        # Store the most recent LiDAR scan for the Flask dashboard
+        self.latest_scan = None
+        
+        self.scan_subscription = self.create_subscription(
+            LaserScan,
+            "/scan",
+            self.scan_callback,
+            10,
+        )
+        
         # Create ROS2 timer to call timer_callback every 0.05 seconds (20 Hz).
         self.timer = self.create_timer(0.05, self.timer_callback)   
 
+    # Keep the latest LiDAR scan available to the dashboard
+    def scan_callback(self, msg):
+        self.latest_scan = {
+            "ranges": list(msg.ranges),
+            "angle_min": float(msg.angle_min),
+            "angle_increment": float(msg.angle_min),
+            "range_min": float(msg.range_min),
+            "range_max": float(msg.range_max),
+        }
+        
     # Publish tracking data at 20Hz on the /tracked_objects topic. 
     # The data is converted to JSON string format before publishing.
     def timer_callback(self):
@@ -55,6 +76,8 @@ class RosTrackPublisher(Node):
 # Run ROS2 publisher in a background thread so that it doesn't block the Flask server.
 def start_ros_publisher(publisher_holder):
 
+    # Share a shutdown signal with FlaskServer so the ROS thread can stop cleanly.
+    stop_event = publisher_holder.setdefault("stop_event", threading.Event())
     context = Context()
     node = None
     executor = None
@@ -66,7 +89,6 @@ def start_ros_publisher(publisher_holder):
             signal_handler_options = SignalHandlerOptions.NO
         )
         
-        #rclpy.init()                    # Initialize ROS2 system
         node = RosTrackPublisher(context = context)      # Create ROS2 node
         publisher_holder["node"] = node # Store node in a shared dictionary to update `latest_tracks` from the Flask server.
     
@@ -117,24 +139,20 @@ class FlaskServer:
             "rgb": None,
             "unified": None,
             "depth": None,
+            "lidar": None,
         }
         self.latest_jpegs = {
             "rgb": None,
             "unified": None,
             "depth": None,
+            "lidar": None,
         }
-
-        # LiDAR is a static placeholder until the actual sensor/topic is connected.
-        self.lidar_placeholder = self._make_lidar_placeholder()
-        self.lidar_placeholder_jpeg = self._encode_jpeg(self.lidar_placeholder)
 
         # Limit dashboard image refresh to reduce CPU/network overhead.
         # Perception/tracking and ROS 2 publishing still run at camera rate.
-
-        self.display_interval = 1.0 / 15.0
-
-
-        # Tell Flask clients when a new display frame is available.
+        self.display_interval = 1.0 / 15
+        
+        # Tell Flask clients when a new display frame is available
         self.frame_number = 0
         self.frame_condition = threading.Condition()
 
@@ -143,6 +161,7 @@ class FlaskServer:
             "rgb": 0,
             "unified": 0,
             "depth": 0,
+            "lidar": 0,
         }
         self._stop_event = threading.Event()
         
@@ -150,8 +169,8 @@ class FlaskServer:
         self._register_routes()
 
         self.processing_thread = threading.Thread(
-            target=self._processing_loop,
-            daemon=True,
+            target = self._processing_loop,
+            daemon = True,
         )
         self.processing_thread.start()
     
@@ -166,394 +185,7 @@ class FlaskServer:
         def dashboard():
 
             return render_template_string("""
-        <!DOCTYPE html>
-
-        <html>
-
-        <head>
-
-            <meta name = "viewport"
-                content = "width=device-width, initial-scale = 1.0">
-            <title>A.R.F Camera Dashboard</title>
-
-            <style>
-
-                * {
-                    box-sizing: border-box;
-                }
-
-                html, body {
-                    margin: 0;
-                    padding: 0;
-                    width: 100%;
-                    height: 100%;
-                }
-
-                body {
-                    background: #111;
-                    color: white;
-                    font-family: Arial, sans-serif;
-                    overflow: hidden;
-                }
-
-                /* --------------------------------
-                   Header
-                -------------------------------- */
-
-                .header {
-                    height: 60px;
-
-                    display: flex;
-                    align-items: center;
-
-                    padding: 0 16px;
-
-                    background: #1b1b1b;
-
-                    font-size: 20px;
-                    font-weight: bold;
-                }
-
-
-                /* --------------------------------
-                   Control buttons
-                -------------------------------- */
-
-                .controls {
-                    height: 55px;
-
-                    display: flex;
-                    align-items: center;
-
-                    gap: 10px;
-
-                    padding: 8px 16px;
-
-                    background: #222;
-                }
-
-                .controls button {
-
-                    padding: 8px 16px;
-
-                    border: none;
-                    border-radius: 4px;
-
-                    background: #444;
-                    color: white;
-
-                    cursor: pointer;
-
-                    font-size: 14px;
-                }
-
-                .controls button:hover {
-                    background: #555;
-                }
-
-                .controls button.active {
-                    background: #666;
-                }
-
-
-                /* --------------------------------
-                   Display area
-                -------------------------------- */
-
-                .viewer {
-
-                    width: 100%;
-                    height: calc(100vh - 115px);
-
-                    display: grid;
-                    gap: 5px;
-
-                    background: black;
-                    padding: 6px;
-
-                    overflow: hidden;
-                    box-sizing: border-box;
-                }
-
-
-                /* --------------------------------
-                   Individual display panels
-                -------------------------------- */
-
-                .panel {
-
-                    position: relative;
-
-                    min-width: 0;
-                    min-height: 0;
-
-                    background: black;
-
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-
-                    overflow: hidden;
-                }
-
-                .panel img {
-                    width: 100%;
-                    height: 100%;
-
-                    object-fit: contain;
-
-                    display: block;
-                }
-                
-                /* --------------------------------
-                   Individual control panels
-                -------------------------------- */
-                .panel-controls {
-                    position: absolute;
-
-                    top: 8px;
-
-                    right: 8px;
-
-                    z-index: 10;
-                }
-
-                .view-select {
-
-                    background-color: #34495e;
-                    color: white;
-
-                    border: 1px solid #607d8b;
-                    border-radius: 6px;
-
-                    padding: 7px 12px;
-
-                    font-size: 14px;
-                    font-weight: 500;
-
-                    cursor: pointer;
-                }
-
-                .view-select option {
-                    background-color: #34495e;
-                    color: white;
-                }
-                
-                /* --------------------------------
-                   Camera image
-                -------------------------------- */
-
-                .panel img {
-
-                    width: 100%;
-                    height: 100%;
-
-                    object-fit: contain;
-
-                    display: block;
-                }
-
-                @media (max-width: 768px) {
-
-                    .viewer {
-                        height: calc(100vh - 130px);
-
-                        display: grid;
-
-                        grid-template-columns: 1fr !important;
-                        grid-template-rows: none !important;
-
-                        grid-auto-rows: minmax(45vh, auto) !important;
-                        
-                        gap: 4px;
-                        padding: 4px;
-
-                        overflow-y: auto;
-                    }
-
-                    .panel {
-                        width: 100%;
-                        min-width: 0;
-                        min-height: 45vh;
-                    }
-
-                    .panel-controls {
-                        top: 6px;
-                        left: 6px;
-                    }
-
-                    .view-select {
-                        font-size: 14px;
-                        padding: 6px 8px;
-                    }
-                }
-                    
-                /* --------------------------------
-                   Display label
-                -------------------------------- */
-
-                .label {
-
-                    position: absolute;
-
-                    top: 10px;
-                    left: 10px;
-
-                    padding: 6px 10px;
-
-                    background: rgba(0, 0, 0, 0.7);
-
-                    border-radius: 4px;
-
-                    font-size: 14px;
-                    font-weight: bold;
-                }
-
-
-                /* --------------------------------
-                   LiDAR placeholder
-                -------------------------------- */
-
-                .lidar-placeholder {
-
-                    width: 100%;
-                    height: 100%;
-
-                    display: flex;
-
-                    align-items: center;
-                    justify-content: center;
-
-                    background: #050505;
-
-                    color: #888;
-
-                    font-size: 24px;
-                }
-
-            </style>
-
-            
-
-        </head>
-
-
-        <body>
-
-
-            <!-- Header -->
-
-            <div class="header">
-
-                A.R.F Camera Dashboard (Front, OAK-D Lite)
-
-            </div>
-
-
-            <!-- Buttons -->
-
-            <div class="controls">
-
-                <span class = "control-title">Number of Views:
-
-                </span>
-
-                <button onclick = "setViewCount(1, this)" class = "active">
-                    1
-                </button>
-
-                <button onclick = "setViewCount(2, this)">
-                    2
-                </button>
-                
-                <button onclick = "setViewCount(3, this)">
-                    3
-                </button>
-
-                <button onclick = "setViewCount(4, this)">
-                    4
-                </button>
-                
-            </div>
-
-
-            <!-- Display area -->
-
-            <div
-                id = "viewer"
-                class = "viewer">
-
-            </div>
-
-
-            <script>
-
-                const viewNames = {
-                    rgb: "RGB",
-                    unified: "Unified",
-                    depth: "Depth",
-                    lidar: "LiDAR"
-                };
-
-                let viewCount = 1;
-
-                let selectedViews = [
-                    "rgb",
-                    "unified",
-                    "depth",
-                    "lidar"
-                ];
-
-                function setViewCount(count, button)
-                {
-                    viewCount = count;
-
-                    const buttons = document.querySelectorAll(".controls button");
-
-                    buttons.forEach(function(item)
-                    {
-                        item.classList.remove("active");
-                    });
-
-                    button.classList.add("active");
-
-                    updateViewer();
-                }
-
-                function updateViewer()
-                {
-                    const viewer = document.getElementById("viewer");
-
-                    viewer.innerHTML = "";
-
-                    if (viewCount === 1)
-                    {
-                        viewer.style.gridTemplateColumns = "1fr";
-                        viewer.style.gridTemplateRows = "1fr";
-                    }
-
-                    else if (viewCount === 2)
-                    {
-                        viewer.style.gridTemplateColumns = "1fr 1fr";
-                        viewer.style.gridTemplateRows = "1fr";
-                    }
-                    else
-                    {
-                        viewer.style.gridTemplateColumns = "1fr 1fr";
-                        viewer.style.gridTemplateRows = "1fr 1fr";
-                    }
-                    
-                    for (let i = 0; i < viewCount; i++)
-                    {
-                        createCameraPanel(
-                            viewer,
-                            i,
-                            selectedViews[i]
-                        );
-                    }
-                }
-
-                function createCameraPanel(viewer, index, view)
+                        function createCameraPanel(viewer, index, view)
                 {
                     const panel = document.createElement("div");
 
@@ -642,43 +274,83 @@ class FlaskServer:
                 content_type="multipart/x-mixed-replace; boundary=frame",
             )
 
-        # Static placeholder until the LiDAR ROS 2 topic is connected.
-        # Returning one JPEG avoids repeatedly transmitting an unchanged image.
+        # Live LiDAR scan stream from ROS 2 topic /scan.
         @app.route("/lidar")
         def lidar_stream():
-            return Response(self.lidar_placeholder_jpeg, mimetype="image/jpeg")
+            return Response(
+                self._gen_shared("lidar"),
+                content_type = "multipart/x-mixed-replace; boundary=frame",
+                )
 
-    def _make_lidar_placeholder(self):
-        """Create a clear placeholder while LiDAR input is not connected."""
-        image = np.zeros((288, 512, 3), dtype=np.uint8)
+    def _make_lidar_frame(self, scan):
+        """Render a LaserScan message as a top-down 2D point visualization."""
+        width = 512
+        height = 512
+        image = np.zeros((height, width, 3), dtype=np.uint8)
         image[:] = (12, 12, 12)
+        center = (width // 2, height // 2)
+        radius_px = 205
 
-        center = (256, 144)
-        for radius in (35, 70, 105):
-            cv2.circle(image, center, radius, (55, 70, 70), 1)
+        if scan is None:
+            cv2.putText(
+                image, "Waiting for /scan data", (95, height // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 2, cv2.LINE_AA,
+            )
+            return image
 
-        cv2.line(image, (151, 144), (361, 144), (55, 70, 70), 1)
-        cv2.line(image, (256, 39), (256, 249), (55, 70, 70), 1)
-        cv2.circle(image, center, 5, (0, 190, 255), -1)
+        ranges = np.asarray(scan["ranges"], dtype=np.float32)
+        range_min = max(0.0, float(scan["range_min"]))
+        sensor_range_max = float(scan["range_max"])
+        if not np.isfinite(sensor_range_max) or sensor_range_max <= 0:
+            sensor_range_max = 8.0
+        display_range = min(sensor_range_max, 8.0)
+        display_range = max(display_range, 0.1)
+        scale = radius_px / display_range
+
+        # Draw distance rings and crosshairs.
+        ring_count = 4
+        for ring_index in range(1, ring_count + 1):
+            distance = display_range * ring_index / ring_count
+            ring_radius = int(distance * scale)
+            cv2.circle(image, center, ring_radius, (55, 70, 70), 1)
+            cv2.putText(
+                image, f"{distance:.1f}m", (center[0] + 5, center[1] - ring_radius + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (130, 145, 145), 1, cv2.LINE_AA,
+            )
+
+        cv2.line(image, (center[0] - radius_px, center[1]),
+                 (center[0] + radius_px, center[1]), (45, 55, 55), 1)
+        cv2.line(image, (center[0], center[1] - radius_px),
+                 (center[0], center[1] + radius_px), (45, 55, 55), 1)
+
+        # ROS LaserScan angle 0 points along +X; display it toward the top.
+        angle_min = float(scan["angle_min"])
+        angle_increment = float(scan["angle_increment"])
+        angles = angle_min + np.arange(ranges.size, dtype=np.float32) * angle_increment
+        valid = (
+            np.isfinite(ranges)
+            & (ranges >= range_min)
+            & (ranges <= display_range)
+            & (ranges > 0.0)
+        )
+        valid_ranges = ranges[valid]
+        valid_angles = angles[valid]
+
+        if valid_ranges.size:
+            px = np.rint(center[0] - valid_ranges * np.sin(valid_angles) * scale).astype(int)
+            py = np.rint(center[1] - valid_ranges * np.cos(valid_angles) * scale).astype(int)
+            inside = (px >= 0) & (px < width) & (py >= 0) & (py < height)
+            for point_x, point_y in zip(px[inside], py[inside]):
+                cv2.circle(image, (int(point_x), int(point_y)), 2, (0, 220, 100), -1)
+
+        cv2.circle(image, center, 6, (0, 190, 255), -1)
         cv2.putText(
-            image,
-            "LiDAR",
-            (18, 32),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (230, 230, 230),
-            2,
-            cv2.LINE_AA,
+            image, f"LiDAR /scan | displayed range: {display_range:.1f} m",
+            (12, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (230, 230, 230), 1, cv2.LINE_AA,
         )
         cv2.putText(
-            image,
-            "Integration pending",
-            (145, 275),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (170, 170, 170),
-            1,
-            cv2.LINE_AA,
+            image, f"Valid returns: {int(valid_ranges.size)} / {ranges.size}",
+            (12, height - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (170, 170, 170), 1, cv2.LINE_AA,
         )
         return image
 
@@ -774,6 +446,7 @@ class FlaskServer:
                         active_rgb = self.active_streams["rgb"] > 0
                         active_unified = self.active_streams["unified"] > 0
                         active_depth = self.active_streams["depth"] > 0
+                        active_lidar = self.active_streams["lidar"] > 0
 
                     # Render only the views currently being requested.   
                     rgb_frame = frame.copy() if active_rgb else None
@@ -794,6 +467,12 @@ class FlaskServer:
                         depth_frame = self.depth_processor.process(
                             latest_raw_depth
                         )
+                    
+                    lidar_frame = None
+                    if active_lidar:
+                        current_node = self.ros_holder.get("node")
+                        latest_scan = current_node.latest_scan if current_node is not None else None
+                        lidar_frame = self._make_lidar_frame(latest_scan)
                         
                     # Encode each requested view once for all its clients.
                     rgb_jpeg = None
@@ -811,6 +490,11 @@ class FlaskServer:
                     
                     if depth_frame is not None:
                         depth_jpeg = self._encode_jpeg(depth_frame)
+                        
+                    lidar_jpeg = None
+                    
+                    if lidar_frame is not None:
+                        lidar_jpeg = self._encode_jpeg(lidar_frame)
 
                     # Diagnose slow rendering and JPEG encoding.
                     display_elapsed = time.monotonic() - display_start
@@ -832,13 +516,16 @@ class FlaskServer:
                             "rgb": rgb_frame,
                             "unified": unified_frame,
                             "depth": depth_frame,
+                            "lidar": lidar_frame,
                         }
                         
                         self.latest_jpegs = {
                             "rgb": rgb_jpeg,
                             "unified": unified_jpeg,
                             "depth": depth_jpeg,
+                            "lidar": lidar_jpeg,
                         }
+                        
                         self.frame_number += 1
                         self.frame_condition.notify_all()
 
@@ -905,11 +592,11 @@ class FlaskServer:
     def stop(self):
         self._stop_event.set()
 
-        # Wake stream generators that are waiting for another frame.
-        with self.frame_condition:
-            self.frame_condition.notify_all()
+        ros_stop_event = self.ros_holder.get("stop_event")
+        
+        if ros_stop_event is not None:
+            ros_stop_event.set()
     
-        self.processing_thread.join(timeout = 3)
     # -----------------------------
     # START Flask SERVER
     # -----------------------------
