@@ -137,15 +137,13 @@ class FlaskServer:
         self.tracker = tracker
         self.ros_holder = ros_holder
         self.depth_processor = DepthProcessor()
+        
+        # Cached static LiDAR grid, rebuilt only if the display range changes.
+        self._lidar_bg = None
+        self._lidar_bg_range = None
 
         # Shared processed frames and JPEGs. JPEGs are encoded once and reused
         # by every browser client rather than encoded separately per client.
-        self.latest_frames = {
-            "rgb": None,
-            "unified": None,
-            "depth": None,
-            "lidar": None,
-        }
         self.latest_jpegs = {
             "rgb": None,
             "unified": None,
@@ -156,7 +154,7 @@ class FlaskServer:
         # Limit dashboard image refresh to reduce CPU/network overhead.
         # Perception/tracking and ROS 2 publishing still run at camera rate.
 
-        self.display_interval = 1.0 / 15.0
+        self.display_interval = 1.0 / 30.0
 
 
         # Tell Flask clients when a new display frame is available.
@@ -550,6 +548,12 @@ class FlaskServer:
                 {
                     const viewer = document.getElementById("viewer");
 
+                    // Close the old MJPEG connections before removing the images.
+                    viewer.querySelectorAll("img").forEach(function(img)
+                    {
+                        img.src = "";
+                    });
+
                     viewer.innerHTML = "";
 
                     if (viewCount === 1)
@@ -557,7 +561,6 @@ class FlaskServer:
                         viewer.style.gridTemplateColumns = "1fr";
                         viewer.style.gridTemplateRows = "1fr";
                     }
-
                     else if (viewCount === 2)
                     {
                         viewer.style.gridTemplateColumns = "1fr 1fr";
@@ -568,7 +571,7 @@ class FlaskServer:
                         viewer.style.gridTemplateColumns = "1fr 1fr";
                         viewer.style.gridTemplateRows = "1fr 1fr";
                     }
-                    
+
                     for (let i = 0; i < viewCount; i++)
                     {
                         createCameraPanel(
@@ -647,84 +650,40 @@ class FlaskServer:
         # Raw RGB frames
         @app.route("/rgb")
         def rgb_stream():
-            return Response(
-                self._gen_shared("rgb"),
-                content_type="multipart/x-mixed-replace; boundary=frame",
-            )
+            return self._mjpeg_response("rgb")
 
         # Unified YOLO + tracker view (one box per tracked object).
         @app.route("/unified")
         def unified_stream():
-            return Response(
-                self._gen_shared("unified"),
-                content_type="multipart/x-mixed-replace; boundary=frame",
-            )
+            return self._mjpeg_response("unified")
 
         # Colorized stereo depth view.
         @app.route("/depth")
         def depth_stream():
-            return Response(
-                self._gen_shared("depth"),
-                content_type="multipart/x-mixed-replace; boundary=frame",
-            )
+            return self._mjpeg_response("depth")
 
         # Live LiDAR scan stream from ROS 2 topic /scan.
         @app.route("/lidar")
         def lidar_stream():
-            return Response(
-                self._gen_shared("lidar"),
-                content_type="multipart/x-mixed-replace; boundary=frame",
-            )
+            return self._mjpeg_response("lidar")
 
-    def _make_lidar_frame(self, scan):
-        """Render /scan in an RViz-style, top-down Cartesian grid.
-
-        The grid is centered on the robot and uses the ROS convention:
-        +X points right, +Y points up, and angles are measured counterclockwise
-        from +X. This is a live scan view, not a persistent occupancy map.
-        """
+    def _mjpeg_response(self, name):
+        resp = Response(
+            self._gen_shared(name),
+            content_type="multipart/x-mixed-replace; boundary=frame",
+        )
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["X-Accel-Buffering"] = "no"
+        return resp
+    
+    def _draw_lidar_grid(self, display_range):
+        """Draw the static LiDAR background (grid, axes, labels) once."""
         width = 512
         height = 512
         image = np.full((height, width, 3), (18, 18, 18), dtype=np.uint8)
         center_x = width // 2
         center_y = height // 2
-        center = (center_x, center_y)
         grid_radius_px = 210
-
-        if scan is None:
-            cv2.putText(
-                image,
-                "Waiting for /scan data",
-                (82, height // 2 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (190, 190, 190),
-                2,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                image,
-                "Check that the ROS 2 subscription is receiving LaserScan",
-                (24, height // 2 + 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.36,
-                (130, 130, 130),
-                1,
-                cv2.LINE_AA,
-            )
-            return image
-
-        ranges = np.asarray(scan.get("ranges", []), dtype=np.float32)
-        range_min = float(scan.get("range_min", 0.0))
-        sensor_range_max = float(scan.get("range_max", 8.0))
-        if not np.isfinite(range_min):
-            range_min = 0.0
-        if not np.isfinite(sensor_range_max) or sensor_range_max <= 0.0:
-            sensor_range_max = 8.0
-
-        # The plotted square spans +/- display_range metres on each axis.
-        # Range returns longer than this are omitted to keep the view readable.
-        display_range = max(0.5, min(sensor_range_max, 8.0))
         pixels_per_metre = grid_radius_px / display_range
 
         def world_to_pixel(x_metres, y_metres):
@@ -800,6 +759,70 @@ class FlaskServer:
             cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 120, 220), 1, cv2.LINE_AA,
         )
 
+        return image
+    def _make_lidar_frame(self, scan):
+        """Render /scan in an RViz-style, top-down Cartesian grid.
+
+        The grid is centered on the robot and uses the ROS convention:
+        +X points right, +Y points up, and angles are measured counterclockwise
+        from +X. This is a live scan view, not a persistent occupancy map.
+        """
+        width = 512
+        height = 512
+        center_x = width // 2
+        center_y = height // 2
+        center = (center_x, center_y)
+        grid_radius_px = 210
+
+        if scan is None:
+            image = np.full((height, width, 3), (18, 18, 18), dtype=np.uint8)
+            cv2.putText(
+                image,
+                "Waiting for /scan data",
+                (82, height // 2 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (190, 190, 190),
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                image,
+                "Check that the ROS 2 subscription is receiving LaserScan",
+                (24, height // 2 + 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.36,
+                (130, 130, 130),
+                1,
+                cv2.LINE_AA,
+            )
+            return image
+
+        ranges = np.asarray(scan.get("ranges", []), dtype=np.float32)
+        range_min = float(scan.get("range_min", 0.0))
+        sensor_range_max = float(scan.get("range_max", 8.0))
+        if not np.isfinite(range_min):
+            range_min = 0.0
+        if not np.isfinite(sensor_range_max) or sensor_range_max <= 0.0:
+            sensor_range_max = 8.0
+
+        # The plotted square spans +/- display_range metres on each axis.
+        # Range returns longer than this are omitted to keep the view readable.
+        display_range = max(0.5, min(sensor_range_max, 8.0))
+        pixels_per_metre = grid_radius_px / display_range
+
+        # Bounds of the plotted grid, used to discard points outside it.
+        grid_left = center_x - grid_radius_px
+        grid_right = center_x + grid_radius_px
+        grid_top = center_y - grid_radius_px
+        grid_bottom = center_y + grid_radius_px
+
+        # Reuse the pre-drawn grid instead of redrawing it every frame.
+        if self._lidar_bg is None or self._lidar_bg_range != display_range:
+            self._lidar_bg = self._draw_lidar_grid(display_range)
+            self._lidar_bg_range = display_range
+        image = self._lidar_bg.copy()
+
         # Convert each LaserScan polar measurement into ROS X/Y coordinates.
         angle_min = float(scan.get("angle_min", 0.0))
         angle_increment = float(scan.get("angle_increment", 0.0))
@@ -831,9 +854,13 @@ class FlaskServer:
                 & (point_y >= grid_top)
                 & (point_y <= grid_bottom)
             )
-            # Small bright scan dots closely resemble the LaserScan display in RViz.
-            for px, py in zip(point_x[inside], point_y[inside]):
-                cv2.circle(image, (int(px), int(py)), 2, (255, 0, 255), -1, cv2.LINE_AA)
+
+            # Draw all points at once with NumPy indexing (2x2 dots)
+            # instead of one cv2.circle call per point.
+            h, w = image.shape[:2]
+            xs, ys = point_x[inside], point_y[inside]
+            for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+                image[np.clip(ys + dy, 0, h - 1), np.clip(xs + dx, 0, w - 1)] = (255, 0, 255)
 
         # Draw a robot-origin marker with its forward (+X) direction.
         cv2.circle(image, center, 7, (20, 20, 20), -1, cv2.LINE_AA)
@@ -872,7 +899,7 @@ class FlaskServer:
         ret, jpeg = cv2.imencode(
             ".jpg",
             frame,
-            [cv2.IMWRITE_JPEG_QUALITY, 80]
+            [cv2.IMWRITE_JPEG_QUALITY, 70]
         )
 
         if not ret:
@@ -889,7 +916,6 @@ class FlaskServer:
         
         last_display_time = 0.0
         last_processing_debug_time = 0.0
-        last_display_debug_time = 0.0
         
         latest_raw_depth = None
 
@@ -996,7 +1022,6 @@ class FlaskServer:
                     if unified_frame is not None:
                         unified_jpeg = self._encode_jpeg(unified_frame)
 
-                    
                     depth_jpeg = None
                     
                     if depth_frame is not None:
@@ -1008,9 +1033,8 @@ class FlaskServer:
 
                     # Diagnose slow rendering and JPEG encoding.
                     display_elapsed = time.monotonic() - display_start
-                    debug_now = time.monotonic()
-                    
-                    # Report unusually slow dashpboard updates.
+
+                    # Report unusually slow dashboard updates.
                     if display_elapsed > self.display_interval:
                         print(
                             f"Dashboard rendering/encoding took "
@@ -1018,17 +1042,8 @@ class FlaskServer:
                             f"(target: {self.display_interval * 1000:.0f} ms)"
                         )
 
-                    last_display_debug_time = debug_now
-                        
-                    # Publish the latest frames and wake waiting stream clients.
+                    # Publish the latest JPEGs and wake waiting stream clients.
                     with self.frame_condition:
-                        self.latest_frames = {
-                            "rgb": rgb_frame,
-                            "unified": unified_frame,
-                            "depth": depth_frame,
-                            "lidar": lidar_frame,
-                        }
-                        
                         self.latest_jpegs = {
                             "rgb": rgb_jpeg,
                             "unified": unified_jpeg,
@@ -1039,6 +1054,7 @@ class FlaskServer:
                         self.frame_condition.notify_all()
 
                     last_display_time = now
+                        
 
     # SHARED MJPEG GENERATOR
     def _gen_shared(self, stream_type):
