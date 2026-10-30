@@ -29,6 +29,107 @@ app = Flask(__name__)
 class RosTrackPublisher(Node):
     
     # Initialize ROS2 node.
+    def __init__(self, context = None):
+        
+        # Node name is 'oakd_tracks', which will be used in ROS2 to identify this node.
+        super().__init__('oakd_tracks', context = context)
+        
+        # Create ROS2 publisher. 
+        # - Topic: /tracked_objects
+        # - Message type: String
+        # - Queue size: 10.
+        self.pub = self.create_publisher(String, 'tracked_objects', 10)
+        
+        # Store the latest tracking data to be published.
+        self.latest_tracks = []
+
+        # Store the most recent LiDAR scan for the Flask dashboard.
+        self.latest_scan = None
+        self.scan_subscription = self.create_subscription(
+            LaserScan,
+            "/scan",
+            self.scan_callback,
+            10,
+        )
+        
+        # Create ROS2 timer to call timer_callback every 0.05 seconds (20 Hz).
+        self.timer = self.create_timer(0.05, self.timer_callback)   
+
+    # Keep the latest LiDAR scan available to the dashboard.
+    def scan_callback(self, msg):
+        self.latest_scan = {
+            "ranges": list(msg.ranges),
+            "angle_min": float(msg.angle_min),
+            "angle_increment": float(msg.angle_increment),
+            "range_min": float(msg.range_min),
+            "range_max": float(msg.range_max),
+        }
+
+    # Publish tracking data at 20Hz on the /tracked_objects topic.
+    # The data is converted to JSON string format before publishing.
+    def timer_callback(self):
+        msg = String()
+        msg.data = json.dumps(self.latest_tracks)
+        self.pub.publish(msg)
+
+# Run ROS2 publisher in a background thread so that it doesn't block the Flask server.
+def start_ros_publisher(publisher_holder, stop_event=None):
+
+    # Share a shutdown signal with main.py and FlaskServer so the ROS thread
+    # can stop cleanly. Accept an optional event for compatibility with callers
+    # that still pass (ros_holder, ros_stop_event).
+    if stop_event is None:
+        stop_event = publisher_holder.setdefault("stop_event", threading.Event())
+    else:
+        publisher_holder["stop_event"] = stop_event
+    context = Context()
+    node = None
+    executor = None
+
+    try:
+        # Give this publisher its own ROS 2 context.
+        rclpy.init(
+            context = context,
+            signal_handler_options = SignalHandlerOptions.NO
+        )
+        
+        #rclpy.init()                    # Initialize ROS2 system
+        node = RosTrackPublisher(context = context)      # Create ROS2 node
+        publisher_holder["node"] = node # Store node in a shared dictionary to update `latest_tracks` from the Flask server.
+    
+        executor = SingleThreadedExecutor(context = context)
+        executor.add_node(node)
+    
+        # Check the shutdown signal regularly.
+        while context.ok() and not stop_event.is_set():
+            executor.spin_once(timeout_sec = 0.1)
+
+    finally:
+        # Stop exposing the node to the processing loop.
+        publisher_holder.pop("node", None)
+    
+        if executor is not None:
+            
+            if node is not None:
+                executor.remove_node(node)
+                
+            executor.shutdown()
+    
+        # Release the node's resources.
+        if node is not None:
+            node.destroy_node()
+    
+        # Shut down only this publisher's context.
+        if context.ok():
+            context.shutdown()
+
+# -----------------------------
+# Flask Server
+# -----------------------------
+class FlaskServer:
+    
+    # Constructor recieves and stores the OAK-D device, YOLO drawer, 
+    # tracker, and ROS2 publisher holder for later use.
     STREAM_NAMES = ("rgb", "unified", "depth", "lidar")
     STREAM_FPS = {"rgb": 15, "unified": 15, "depth": 15, "lidar": 10}
     STREAM_QUALITY = {"rgb": 70, "unified": 70, "depth": 50, "lidar": 70}
@@ -79,15 +180,6 @@ class RosTrackPublisher(Node):
         ]
         for thread in self.stream_threads:
             thread.start()
-        
-        # Register the dashboard and stream endpoints.
-        self._register_routes()
-
-        self.processing_thread = threading.Thread(
-            target=self._processing_loop,
-            daemon=True,
-        )
-        self.processing_thread.start()
     
     # --------------------------------------------------------
     # ROUTES - Define all HTTP endpoints for the Flask server.
@@ -816,7 +908,6 @@ class RosTrackPublisher(Node):
             return None
 
         return jpeg.tobytes()
-
     # -----------------------------
     # SHARED PROCESSING LOOP
     # -----------------------------
@@ -876,6 +967,7 @@ class RosTrackPublisher(Node):
                     f"Acquisition/tracking/ROS took "
                     f"{processing_elapsed * 1000:.0f} ms"
                 )
+                
                 last_processing_debug_time = debug_now
                         
     def _render_stream(self, name, frame, tracks, raw_depth, scan):
