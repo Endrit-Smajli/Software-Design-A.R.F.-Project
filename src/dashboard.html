@@ -27,7 +27,7 @@
             font-family: Arial, sans-serif;
         }
 
-        /* Header */
+        /* Dashboard header */
         .header {
             min-height: 60px;
             display: flex;
@@ -82,7 +82,7 @@
             outline-offset: 2px;
         }
 
-        /* Display area */
+        /* Main display area */
         .viewer {
             flex: 1;
             min-width: 0;
@@ -94,33 +94,33 @@
             background: #000;
         }
 
-        /* Layout for zero views */
+        /* No views selected */
         .viewer.grid-0 {
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
-        /* Layout for one view */
+        /* One view */
         .viewer.grid-1 {
             grid-template-columns: minmax(0, 1fr);
             grid-template-rows: minmax(0, 1fr);
         }
 
-        /* Layout for two views */
+        /* Two views */
         .viewer.grid-2 {
             grid-template-columns: repeat(2, minmax(0, 1fr));
             grid-template-rows: minmax(0, 1fr);
         }
 
-        /* Layout for three and four views */
+        /* Three and four views */
         .viewer.grid-3,
         .viewer.grid-4 {
             grid-template-columns: repeat(2, minmax(0, 1fr));
             grid-template-rows: repeat(2, minmax(0, 1fr));
         }
 
-        /* With three views, let the third panel use the full bottom row. */
+        /* With three views, let the third panel span the bottom row. */
         .viewer.grid-3 .panel:nth-child(3) {
             grid-column: 1 / -1;
         }
@@ -144,7 +144,7 @@
             object-fit: contain;
         }
 
-        /* Panel labels */
+        /* Panel titles */
         .panel-label {
             position: absolute;
             z-index: 2;
@@ -156,7 +156,24 @@
             color: #fff;
             font-size: 13px;
             font-weight: bold;
-            pointer-events: none;
+
+            /* Drag-and-drop styling */
+            cursor: grab;
+            pointer-events: auto;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+
+        .panel.dragging {
+            opacity: 0.45;
+            outline: 2px dashed #438bc9;
+            outline-offset: -3px;
+        }
+
+        .panel.drop-target {
+            outline: 3px solid #55aaff;
+            outline-offset: -3px;
         }
 
         /* Empty dashboard message */
@@ -167,8 +184,35 @@
             text-align: center;
         }
 
+        /* Drag-and-drop notification */
+        .drag-hint {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 100;
+            max-width: calc(100vw - 36px);
+            padding: 11px 15px;
+            border: 1px solid #438bc9;
+            border-radius: 7px;
+            background: rgba(25, 55, 82, 0.96);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            opacity: 0;
+            transform: translateY(8px);
+            pointer-events: none;
+            transition: opacity 180ms ease, transform 180ms ease;
+        }
+
+        .drag-hint.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
         /* Mobile layout */
         @media (max-width: 768px) {
+
             body {
                 overflow: auto;
             }
@@ -209,6 +253,7 @@
                 min-height: 40vh;
             }
         }
+
     </style>
 </head>
 
@@ -262,6 +307,18 @@
           aria-live="polite">
     </main>
 
+    <!-- Drag-and-drop notification -->
+    <div id="dragHint"
+         class="drag-hint"
+         role="status"
+         aria-live="polite"
+         aria-hidden="true">
+
+        Drag a panel by its title to rearrange.
+
+    </div>
+
+
     <script>
 
         // Names associated with each stream.
@@ -273,6 +330,7 @@
         };
 
         const viewer = document.getElementById("viewer");
+        const dragHint = document.getElementById("dragHint");
 
         // RGB is selected by default.
         const selectedViews = ["rgb"];
@@ -280,6 +338,9 @@
         // Store existing panels so their streams aren't restarted
         // when another view is added.
         const panels = new Map();
+
+        let dragHintTimer = null;
+        let dragState = null;
 
 
         // Create a new stream panel.
@@ -293,6 +354,7 @@
             const label = document.createElement("div");
             label.className = "panel-label";
             label.textContent = viewNames[view];
+            label.title = "Drag to rearrange";
 
             // Create stream image.
             const image = document.createElement("img");
@@ -300,6 +362,7 @@
             image.src = "/" + view;
             image.alt = viewNames[view] + " stream";
             image.loading = "eager";
+            image.draggable = false;
 
             panel.appendChild(label);
             panel.appendChild(image);
@@ -334,8 +397,8 @@
                 emptyState.remove();
             }
 
-            // Reorder existing DOM panels without recreating their
-            // image elements. This keeps existing MJPEG connections alive.
+            // Reorder existing panel elements without recreating
+            // their MJPEG image connections.
             selectedViews.forEach(function(view) {
 
                 const panel = panels.get(view);
@@ -349,9 +412,38 @@
         }
 
 
+        // Display the drag-and-drop notification.
+        function showDragHint() {
+
+            if (selectedViews.length < 2) {
+                return;
+            }
+
+            dragHint.classList.add("show");
+            dragHint.setAttribute("aria-hidden", "false");
+
+            if (dragHintTimer !== null) {
+                window.clearTimeout(dragHintTimer);
+            }
+
+            // Keep the message visible for 3.5 seconds.
+            dragHintTimer = window.setTimeout(function() {
+
+                dragHint.classList.remove("show");
+
+                dragHint.setAttribute("aria-hidden", "true");
+
+                dragHintTimer = null;
+
+            }, 3500);
+
+        }
+
+
         // Add or remove a view when its button is clicked.
         function toggleView(view, button) {
 
+            const previousCount = selectedViews.length;
             const index = selectedViews.indexOf(view);
 
             if (index >= 0) {
@@ -366,8 +458,10 @@
                     const image = panel.querySelector("img");
 
                     if (image) {
-                        // Stop the MJPEG connection.
+
+                        // Stop this stream connection.
                         image.removeAttribute("src");
+
                     }
 
                     panel.remove();
@@ -394,6 +488,156 @@
 
             updateLayout();
 
+            // Show the instruction when the dashboard first reaches
+            // two active views.
+            if (previousCount < 2 && selectedViews.length >= 2) {
+
+                showDragHint();
+
+            }
+
+        }
+
+
+        // Clear drag styling after the operation.
+        function clearDragStyles() {
+
+            if (!dragState) {
+                return;
+            }
+
+            dragState.panel.classList.remove("dragging");
+
+            if (dragState.target) {
+                dragState.target.classList.remove("drop-target");
+            }
+
+        }
+
+
+        // Detect when dragging starts.
+        function handlePointerDown(event) {
+
+            const handle = event.target.closest(".panel-label");
+
+            if (!handle || selectedViews.length < 2 || event.button !== 0) {
+                return;
+            }
+
+            const panel = handle.closest(".panel");
+
+            if (!panel) {
+                return;
+            }
+
+            event.preventDefault();
+
+            dragState = {
+                panel: panel,
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                target: null,
+                dragging: false
+            };
+
+        }
+
+
+        // Detect which panel the user is dragging over.
+        function handlePointerMove(event) {
+
+            if (!dragState || event.pointerId !== dragState.pointerId) {
+                return;
+            }
+
+            const dx = event.clientX - dragState.startX;
+            const dy = event.clientY - dragState.startY;
+
+            // Require a small movement so clicking the label
+            // is not treated as a drag.
+            if (!dragState.dragging && Math.hypot(dx, dy) < 6) {
+                return;
+            }
+
+            dragState.dragging = true;
+
+            dragState.panel.classList.add("dragging");
+
+            const element = document.elementFromPoint(
+                event.clientX,
+                event.clientY
+            );
+
+            const targetPanel = element
+                ? element.closest(".panel")
+                : null;
+
+            const newTarget =
+                targetPanel &&
+                targetPanel !== dragState.panel &&
+                targetPanel.parentElement === viewer
+                    ? targetPanel
+                    : null;
+
+            if (dragState.target !== newTarget) {
+
+                if (dragState.target) {
+                    dragState.target.classList.remove("drop-target");
+                }
+
+                dragState.target = newTarget;
+
+                if (dragState.target) {
+                    dragState.target.classList.add("drop-target");
+                }
+
+            }
+
+        }
+
+
+        // Swap panel positions when the pointer is released.
+        function handlePointerUp(event) {
+
+            if (!dragState || event.pointerId !== dragState.pointerId) {
+                return;
+            }
+
+            const wasDragging = dragState.dragging;
+            const target = dragState.target;
+            const draggedView = dragState.panel.dataset.view;
+
+            clearDragStyles();
+
+            dragState = null;
+
+            if (!wasDragging || !target) {
+                return;
+            }
+
+            const fromIndex = selectedViews.indexOf(draggedView);
+            const toIndex = selectedViews.indexOf(target.dataset.view);
+
+            if (
+                fromIndex >= 0 &&
+                toIndex >= 0 &&
+                fromIndex !== toIndex
+            ) {
+
+                // Swap the two views in the display order.
+                [
+                    selectedViews[fromIndex],
+                    selectedViews[toIndex]
+                ] = [
+                    selectedViews[toIndex],
+                    selectedViews[fromIndex]
+                ];
+
+                updateLayout();
+
+            }
+
         }
 
 
@@ -409,10 +653,21 @@
         });
 
 
+        // Pointer Events support mouse, trackpad, and touchscreen dragging.
+        viewer.addEventListener("pointerdown", handlePointerDown);
+
+        document.addEventListener("pointermove", handlePointerMove);
+
+        document.addEventListener("pointerup", handlePointerUp);
+
+        document.addEventListener("pointercancel", handlePointerUp);
+
+
         // Start with RGB selected.
         const rgbButton = document.querySelector('[data-view="rgb"]');
 
         rgbButton.classList.add("active");
+
         rgbButton.setAttribute("aria-pressed", "true");
 
         panels.set("rgb", createPanel("rgb"));
