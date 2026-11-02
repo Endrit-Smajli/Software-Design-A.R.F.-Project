@@ -1,0 +1,425 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A.R.F. Multi-View Dashboard</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: #111;
+            color: #fff;
+            font-family: Arial, sans-serif;
+        }
+
+        /* Header */
+        .header {
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            background: #1b1b1b;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        /* View selection buttons */
+        .controls {
+            min-height: 60px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            background: #222;
+        }
+
+        .control-title {
+            margin-right: 4px;
+            font-size: 14px;
+            color: #ddd;
+        }
+
+        .view-toggle {
+            min-width: 82px;
+            padding: 9px 16px;
+            border: 1px solid #555;
+            border-radius: 5px;
+            background: #3c3c3c;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 120ms ease, border-color 120ms ease;
+        }
+
+        .view-toggle:hover {
+            background: #505050;
+        }
+
+        .view-toggle.active {
+            background: #245b91;
+            border-color: #438bc9;
+        }
+
+        .view-toggle:focus-visible {
+            outline: 2px solid #8fc7ff;
+            outline-offset: 2px;
+        }
+
+        /* Display area */
+        .viewer {
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            gap: 5px;
+            padding: 6px;
+            overflow: hidden;
+            background: #000;
+        }
+
+        /* Layout for zero views */
+        .viewer.grid-0 {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Layout for one view */
+        .viewer.grid-1 {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: minmax(0, 1fr);
+        }
+
+        /* Layout for two views */
+        .viewer.grid-2 {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-rows: minmax(0, 1fr);
+        }
+
+        /* Layout for three and four views */
+        .viewer.grid-3,
+        .viewer.grid-4 {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+        }
+
+        /* With three views, let the third panel use the full bottom row. */
+        .viewer.grid-3 .panel:nth-child(3) {
+            grid-column: 1 / -1;
+        }
+
+        /* Individual stream panels */
+        .panel {
+            position: relative;
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background: #050505;
+        }
+
+        .panel img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        /* Panel labels */
+        .panel-label {
+            position: absolute;
+            z-index: 2;
+            top: 9px;
+            left: 9px;
+            padding: 6px 10px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.72);
+            color: #fff;
+            font-size: 13px;
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        /* Empty dashboard message */
+        .empty-state {
+            padding: 20px;
+            color: #999;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        /* Mobile layout */
+        @media (max-width: 768px) {
+            body {
+                overflow: auto;
+            }
+
+            .header {
+                min-height: 54px;
+                font-size: 18px;
+            }
+
+            .controls {
+                gap: 7px;
+                padding: 9px;
+            }
+
+            .control-title {
+                width: 100%;
+            }
+
+            .view-toggle {
+                flex: 1 1 calc(50% - 7px);
+                min-width: 0;
+            }
+
+            .viewer {
+                flex: 1 0 auto;
+                min-height: calc(100vh - 125px);
+                grid-template-columns: minmax(0, 1fr) !important;
+                grid-template-rows: none !important;
+                grid-auto-rows: minmax(40vh, 1fr);
+                overflow: visible;
+            }
+
+            .viewer.grid-3 .panel:nth-child(3) {
+                grid-column: auto;
+            }
+
+            .panel {
+                min-height: 40vh;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Dashboard header -->
+    <header class="header">
+        A.R.F. Multi-View Dashboard
+    </header>
+
+    <!-- View selection buttons -->
+    <nav class="controls" aria-label="Dashboard views">
+
+        <span class="control-title">
+            Select views to display:
+        </span>
+
+        <button class="view-toggle"
+                type="button"
+                data-view="rgb"
+                aria-pressed="false">
+            RGB
+        </button>
+
+        <button class="view-toggle"
+                type="button"
+                data-view="unified"
+                aria-pressed="false">
+            Unified
+        </button>
+
+        <button class="view-toggle"
+                type="button"
+                data-view="depth"
+                aria-pressed="false">
+            Depth
+        </button>
+
+        <button class="view-toggle"
+                type="button"
+                data-view="lidar"
+                aria-pressed="false">
+            LiDAR
+        </button>
+
+    </nav>
+
+    <!-- Dynamic display area -->
+    <main id="viewer"
+          class="viewer grid-1"
+          aria-live="polite">
+    </main>
+
+    <script>
+
+        // Names associated with each stream.
+        const viewNames = {
+            rgb: "RGB",
+            unified: "Unified",
+            depth: "Depth",
+            lidar: "LiDAR"
+        };
+
+        const viewer = document.getElementById("viewer");
+
+        // RGB is selected by default.
+        const selectedViews = ["rgb"];
+
+        // Store existing panels so their streams aren't restarted
+        // when another view is added.
+        const panels = new Map();
+
+
+        // Create a new stream panel.
+        function createPanel(view) {
+
+            const panel = document.createElement("section");
+            panel.className = "panel";
+            panel.dataset.view = view;
+
+            // Create panel label.
+            const label = document.createElement("div");
+            label.className = "panel-label";
+            label.textContent = viewNames[view];
+
+            // Create stream image.
+            const image = document.createElement("img");
+
+            image.src = "/" + view;
+            image.alt = viewNames[view] + " stream";
+            image.loading = "eager";
+
+            panel.appendChild(label);
+            panel.appendChild(image);
+
+            return panel;
+        }
+
+
+        // Update the dashboard layout.
+        function updateLayout() {
+
+            viewer.className = "viewer grid-" + selectedViews.length;
+
+            // Display a message when no views are selected.
+            if (selectedViews.length === 0) {
+
+                const empty = document.createElement("div");
+
+                empty.className = "empty-state";
+                empty.textContent =
+                    "Select a view above to display a stream.";
+
+                viewer.replaceChildren(empty);
+
+                return;
+            }
+
+            // Remove the empty-state message when a view is selected.
+            const emptyState = viewer.querySelector(".empty-state");
+
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            // Reorder existing DOM panels without recreating their
+            // image elements. This keeps existing MJPEG connections alive.
+            selectedViews.forEach(function(view) {
+
+                const panel = panels.get(view);
+
+                if (panel) {
+                    viewer.appendChild(panel);
+                }
+
+            });
+
+        }
+
+
+        // Add or remove a view when its button is clicked.
+        function toggleView(view, button) {
+
+            const index = selectedViews.indexOf(view);
+
+            if (index >= 0) {
+
+                // View is already selected: remove it.
+                selectedViews.splice(index, 1);
+
+                const panel = panels.get(view);
+
+                if (panel) {
+
+                    const image = panel.querySelector("img");
+
+                    if (image) {
+                        // Stop the MJPEG connection.
+                        image.removeAttribute("src");
+                    }
+
+                    panel.remove();
+                    panels.delete(view);
+
+                }
+
+                button.classList.remove("active");
+                button.setAttribute("aria-pressed", "false");
+
+            } else {
+
+                // View is not selected: add it.
+                selectedViews.push(view);
+
+                const panel = createPanel(view);
+
+                panels.set(view, panel);
+
+                button.classList.add("active");
+                button.setAttribute("aria-pressed", "true");
+
+            }
+
+            updateLayout();
+
+        }
+
+
+        // Connect the four buttons to their respective views.
+        document.querySelectorAll(".view-toggle").forEach(function(button) {
+
+            button.addEventListener("click", function() {
+
+                toggleView(button.dataset.view, button);
+
+            });
+
+        });
+
+
+        // Start with RGB selected.
+        const rgbButton = document.querySelector('[data-view="rgb"]');
+
+        rgbButton.classList.add("active");
+        rgbButton.setAttribute("aria-pressed", "true");
+
+        panels.set("rgb", createPanel("rgb"));
+
+        updateLayout();
+
+    </script>
+
+</body>
+</html>
