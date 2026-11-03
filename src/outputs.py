@@ -58,7 +58,7 @@ class RosTrackPublisher(Node):
     # Keep the latest LiDAR scan available to the dashboard.
     def scan_callback(self, msg):
         self.latest_scan = {
-            "ranges": list(msg.ranges),
+            "ranges": np.array(msg.ranges, dtype = np.float32),
             "angle_min": float(msg.angle_min),
             "angle_increment": float(msg.angle_increment),
             "range_min": float(msg.range_min),
@@ -134,10 +134,9 @@ class FlaskServer:
     STREAM_FPS = {"rgb": 15, "unified": 15, "depth": 15, "lidar": 10}
     STREAM_QUALITY = {"rgb": 70, "unified": 70, "depth": 50, "lidar": 70}
 
-    def __init__(self, device, yolo_drawer, tracker, ros_holder):
+    def __init__(self, device, tracker, ros_holder):
 
         self.device = device
-        self.yolo_drawer = yolo_drawer
         self.tracker = tracker
         self.ros_holder = ros_holder
         self.depth_processor = DepthProcessor()
@@ -149,6 +148,10 @@ class FlaskServer:
         # Newest acquisition result: (frame, tracks, raw_depth, scan).
         # Written by the processing loop, read by the per-view workers.
         self.latest_source = None
+        
+        # Wakes the per-view workers when the processing loop publishes new data.
+        self.source_condition = threading.Condition()
+        self.source_version = 0
 
         # Each view has its own JPEG slot, frame counter and condition,
         # so a slow view can never hold up the others.
@@ -473,47 +476,49 @@ class FlaskServer:
                 latest_raw_depth = raw_depth
 
             if frame is None:
-                time.sleep(0.001)
-                continue
+                time.sleep(0.005)
+            else:
+                # Use the newest available detection packet.
+                in_nn = self.device.get_detections()
 
-            # Use the newest available detection packet.
-            in_nn = self.device.q_nn.tryGet()
+                if in_nn is not None:
+                    detections = in_nn.detections
 
-            if in_nn is not None:
-                detections = in_nn.detections
+                tracks = self.tracker.update(detections, frame.shape)
+                tracks = [dict(t) for t in tracks]    # private copy for the workers
 
-            tracks = self.tracker.update(detections, frame.shape)
-            tracks = [dict(t) for t in tracks]    # private copy for the workers
+                for t in tracks:
+                    t["distance_m"] = self.depth_processor.distance_m(
+                        latest_raw_depth, t, frame.shape
+                    )
 
-            for t in tracks:
-                t["distance_m"] = self.depth_processor.distance_m(
-                    latest_raw_depth, t, frame.shape
-                )
+                node = self.ros_holder.get("node")
+                scan = None
 
-            node = self.ros_holder.get("node")
-            scan = None
+                if node is not None:
+                    node.latest_tracks = tracks
+                    scan = node.latest_scan
 
-            if node is not None:
-                node.latest_tracks = tracks
-                scan = node.latest_scan
+                # Hand the newest data to the per-view workers.
+                with self.source_condition:
+                    self.latest_source = (frame, tracks, latest_raw_depth, scan)
+                    self.source_version += 1
+                    self.source_condition.notify_all()
 
-            # Hand the newest data to the per-view workers.
-            self.latest_source = (frame, tracks, latest_raw_depth, scan)
+                # Diagnose acquisition, tracking, and ROS processing.
+                processing_elapsed = time.monotonic() - loop_start
+                debug_now = time.monotonic()
 
-            # Diagnose acquisition, tracking, and ROS processing.
-            processing_elapsed = time.monotonic() - loop_start
-            debug_now = time.monotonic()
-
-            if (
-                processing_elapsed > 1.0 / 15.0
-                and debug_now - last_processing_debug_time >= 1.0
-            ):
-                print(
-                    f"Acquisition/tracking/ROS took "
-                    f"{processing_elapsed * 1000:.0f} ms"
-                )
-                
-                last_processing_debug_time = debug_now
+                if (
+                    processing_elapsed > 1.0 / 15.0
+                    and debug_now - last_processing_debug_time >= 1.0
+                ):
+                    print(
+                        f"Acquisition/tracking/ROS took "
+                        f"{processing_elapsed * 1000:.0f} ms"
+                    )
+                    
+                    last_processing_debug_time = debug_now
                         
     def _render_stream(self, name, frame, tracks, raw_depth, scan):
         """Build the BGR image for one view from the newest source data."""
@@ -521,7 +526,7 @@ class FlaskServer:
             return frame
 
         if name == "unified":
-            return self.tracker._draw_unified(frame.copy(), tracks)
+            return self.tracker.draw_unified(frame.copy(), tracks)
 
         if name == "depth":
             return self.depth_processor.process(raw_depth)
@@ -533,60 +538,65 @@ class FlaskServer:
 
     def _stream_worker(self, name):
         """Render and encode one view, but only while someone is watching it."""
-        min_interval = 1.0 / self.STREAM_FPS[name]
+        
+        frame_budget = 1.0 / self.STREAM_FPS[name]
         quality = self.STREAM_QUALITY[name]
         condition = self.stream_conditions[name]
 
-        no_key = object()
-        last_key = no_key
-        last_run = 0.0
+        last_version = -1
+        last_key = object()
+        
         last_warn = 0.0
 
         while not self._stop_event.is_set():
 
-            source = self.latest_source
-
-            # Idle while no browser is viewing this stream.
-            if self.active_streams[name] == 0 or source is None:
-                time.sleep(0.05)
-                continue
-
-            frame, tracks, raw_depth, scan = source
-
-            # The input object that tells us this view has new data.
-            key = {
-                "rgb": frame,
-                "unified": frame,
-                "depth": raw_depth,
-                "lidar": scan,
-            }[name]
-
-            now = time.monotonic()
-
-            if key is last_key or now - last_run < min_interval:
-                time.sleep(0.003)
-                continue
-
-            last_key = key
-            last_run = now
-
-            start = time.monotonic()
-            image = self._render_stream(name, frame, tracks, raw_depth, scan)
-            jpeg = self._encode_jpeg(image, quality) if image is not None else None
-            elapsed = time.monotonic() - start
-
-            if elapsed > min_interval and start - last_warn >= 1.0:
-                print(
-                    f"{name} view took {elapsed * 1000:.0f} ms "
-                    f"(target: {min_interval * 1000:.0f} ms)"
+            # Sleep until the processing loop publishes something new.
+            with self.source_condition:
+                self.source_condition.wait_for(
+                    lambda: self.source_version != last_version
+                    or self._stop_event.is_set(),
+                    timeout = 0.5,
                 )
-                last_warn = start
-
-            with condition:
-                self.latest_jpegs[name] = jpeg
-                self.stream_numbers[name] += 1
-                condition.notify_all()
                 
+                version = self.source_version
+                source = self.latest_source
+            
+            new_data = version != last_version
+            last_version = version
+            watched = self.active_streams[name] > 0
+            
+            if new_data and watched and source is not None:
+                frame, tracks, raw_depth, scan = source
+                
+                # The input object that tells us this view has new data.
+                key = {
+                    "rgb": frame,
+                    "unified": frame,
+                    "depth": raw_depth,
+                    "lidar": scan,
+                }[name]
+                
+                if key is not last_key:
+                    last_key = key
+                    
+                    start = time.monotonic()
+                    image = self._render_stream(name, frame, tracks, raw_depth, scan)
+                    jpeg = self._encode_jpeg(image, quality) if image is not None else None
+                    elapsed = time.monotonic() - start
+                    
+                    if elapsed > frame_budget and start - last_warn >= 1.0:
+                        print(
+                            f"{name} view took {elapsed * 1000:.0f} ms "
+                            f"(target: {frame_budget * 1000:.0f} ms)"
+                        )
+                        
+                        last_warn = start
+                    
+                    with condition:
+                        self.latest_jpegs[name] = jpeg
+                        self.stream_numbers[name] += 1
+                        condition.notify_all()
+                        
     # SHARED MJPEG GENERATOR
     def _gen_shared(self, stream_type):
 
@@ -599,7 +609,9 @@ class FlaskServer:
 
         try:
             while not self._stop_event.is_set():
-
+                
+                jpeg_bytes = None
+                
                 with condition:
                     condition.wait_for(
                         lambda: (
@@ -609,14 +621,15 @@ class FlaskServer:
                         timeout = 1.0,
                     )
 
+                    if (
+                        not self._stop_event.is_set()
+                        and self.stream_numbers[stream_type] != last_number
+                    ):
+                        jpeg_bytes = self.latest_jpegs[stream_type]
+                        last_number = self.stream_numbers[stream_type]
+                        
                     if self._stop_event.is_set():
                         return
-
-                    if self.stream_numbers[stream_type] == last_number:
-                        continue    # timed out with nothing new
-
-                    jpeg_bytes = self.latest_jpegs[stream_type]
-                    last_number = self.stream_numbers[stream_type]
 
                 if jpeg_bytes is not None:
 
@@ -644,6 +657,9 @@ class FlaskServer:
             ros_stop_event.set()
 
         # Wake stream generators that are waiting for another frame.
+        with self.source_condition:
+            self.source_condition.notify_all()
+            
         for condition in self.stream_conditions.values():
             with condition:
                 condition.notify_all()
