@@ -104,16 +104,18 @@ class DepthProcessor:
         if depth.ndim != 2:
             return None
 
-        depth_float = depth.astype(np.float32)
-        valid_pixels = depth_float > 0
+        invalid = depth == 0
 
         # Invert the scale so nearer valid objects map to warmer colors.
-        clipped_depth = np.clip(depth_float, 0, self.max_depth_mm)
-        intensity = (255.0 * (1.0 - clipped_depth / self.max_depth_mm)). astype(np.uint8)
-        intensity[~valid_pixels] = 0
+        clipped_depth = np.minimum(depth, self.max_depth_mm)
+        intensity = cv2.convertScaleAbs(
+            clipped_depth, alpha = -255.0 / self.max_depth_mm, beta = 255.0
+        ) 
 
+        intensity[invalid] = 0  # Set invalid pixels to black before colorization.
+        
         colorized = cv2.applyColorMap(intensity, cv2.COLORMAP_TURBO)
-        colorized[~valid_pixels] = (0, 0, 0)
+        colorized[invalid] = 0
 
         cv2.putText(
             colorized,
@@ -466,7 +468,7 @@ class SimpleSortTracker:
         return frame  # Return modified frame with tracking boxes and IDs.
 
     # Unified Yolo + Tracker Drawing
-    def _draw_unified(self, frame, tracks):
+    def draw_unified(self, frame, tracks):
         """
         Draw one bounding box per tracked object.
 
