@@ -1,4 +1,4 @@
-import depthai as dai   # DetphAi SDK import
+import depthai as dai   # DepthAi SDK import
 
 class OakDDevice:
     """
@@ -8,15 +8,13 @@ class OakDDevice:
     the old YOLOv5 OpenVINO .blob file.
     """
     
-    # Establish DetphAI pipeline
+    # Establish DepthAI pipeline
     def __init__(self):
         self.pipeline = dai.Pipeline()
 
         self._build_color_camera()  # Build color camera node in the pipeline
         self._build_yolo()          # Build YOLO node in the pipeline
         self._build_stereo_depth()  # Build stereo depth node in the pipeline
-        
-        #self.pipeline.start()  # Start the pipeline. This initializes the nodes and prepares them for execution.
 
         # Create output queues
         self.q_rgb = self.nn.passthrough.createOutputQueue(maxSize = 1, blocking = False)
@@ -25,7 +23,7 @@ class OakDDevice:
 
         self.pipeline.start()  # Start the pipeline. This initializes the nodes and prepares them for execution.
 
-    # ColorCamera node to capture RGB frames from OAK-D Lite sesor.
+    # ColorCamera node to capture RGB frames from OAK-D Lite sensor.
     def _build_color_camera(self):
         """
         Build the OAK-D Lite RGB camera.
@@ -34,11 +32,6 @@ class OakDDevice:
         """
         
         self.cam = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
-        
-        # Request BGR frames at the model input resolution.
-
-        #Comented out next line (do not delete)
-        #self.cam_output = self.cam.requestOutput((512, 288), type = dai.ImgFrame.Type.BGR888p, fps = 30)
 
     # YOLO detection
     def _build_yolo(self):
@@ -92,8 +85,8 @@ class OakDDevice:
         self.stereo.setRectification(True)
         self.stereo.setLeftRightCheck(True)
         
-##        self.stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
-##        self.stereo.setOutputSize(512, 288)
+##      self.stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+##      self.stereo.setOutputSize(512, 288)
     
     # Helper methods  
     def get_rgb_frame(self):
@@ -107,17 +100,14 @@ class OakDDevice:
             numpy.ndarray or None
         """
 
-        latest_frame = self.q_rgb.tryGet()
-
-        while latest_frame is not None:
-            next_frame = self.q_rgb.tryGet()
-
-            if next_frame is None:
-                return latest_frame.getCvFrame()
-
-            latest_frame = next_frame
-
-        return None
+        latest = None
+        packet = self.q_rgb.tryGet()
+        
+        while packet is not None:
+            latest = packet
+            packet = self.q_rgb.tryGet()
+        
+        return latest.getCvFrame() if latest is not None else None
 
     def get_depth_frame(self):
         """Retrieve the newest raw stereo depth frame.
@@ -127,17 +117,14 @@ class OakDDevice:
         will be created later in processors.py.
         """
 
-        latest_depth = self.q_depth.tryGet()
-
-        while latest_depth is not None:
-            next_depth = self.q_depth.tryGet()
-
-            if next_depth is None:
-                return latest_depth.getFrame()
-
-            latest_depth = next_depth
-
-        return None
+        latest = None
+        packet = self.q_depth.tryGet()
+       
+        while packet is not None:
+           latest = packet
+           packet = self.q_depth.tryGet()
+           
+        return latest.getFrame() if latest is not None else None
     
     def get_detections(self):
         """
