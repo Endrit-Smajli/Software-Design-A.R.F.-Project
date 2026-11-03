@@ -1,12 +1,11 @@
 from oakd_device import OakDDevice
-from processors import YoloDrawer, SimpleSortTracker
+from processors import SimpleSortTracker
 from outputs import FlaskServer, start_ros_publisher
 import threading    # Used to run ROS2 in a background thread while the Flask server runs in the main thread.
 
 if __name__ == "__main__":
     
     device = OakDDevice()           # Initialize the OAK-D device.
-    yolo_drawer = YoloDrawer()      # Initialize processors.
     tracker = SimpleSortTracker()   # Initialize a simple tracking system.
 
     # Prepare ROS2 publisher.
@@ -31,7 +30,6 @@ if __name__ == "__main__":
 
         server = FlaskServer(
             device,
-            yolo_drawer,
             tracker,
             ros_holder
         )
