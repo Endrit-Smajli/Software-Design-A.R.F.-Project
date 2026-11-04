@@ -462,8 +462,10 @@ class FlaskServer:
     def _processing_loop(self):
 
         detections = []
-        last_processing_debug_time = 0.0
+        tracks = []
+        latest_frame = None
         latest_raw_depth = None
+        last_processing_debug_time = 0.0
 
         while not self._stop_event.is_set():
 
@@ -475,9 +477,9 @@ class FlaskServer:
             if raw_depth is not None:
                 latest_raw_depth = raw_depth
 
-            if frame is None:
-                time.sleep(0.005)
-            else:
+            if frame is not None:
+                latest_frame = frame
+
                 # Use the newest available detection packet.
                 in_nn = self.device.get_detections()
 
@@ -485,23 +487,28 @@ class FlaskServer:
                     detections = in_nn.detections
 
                 tracks = self.tracker.update(detections, frame.shape)
-                tracks = [dict(t) for t in tracks]    # private copy for the workers
 
-                for t in tracks:
+            has_new_data = frame is not None or raw_depth is not None
+
+            if has_new_data and latest_frame is not None:
+
+                published = [dict(t) for t in tracks]    # private copy for the workers
+
+                for t in published:
                     t["distance_m"] = self.depth_processor.distance_m(
-                        latest_raw_depth, t, frame.shape
+                        latest_raw_depth, t, latest_frame.shape
                     )
 
                 node = self.ros_holder.get("node")
                 scan = None
 
                 if node is not None:
-                    node.latest_tracks = tracks
+                    node.latest_tracks = published
                     scan = node.latest_scan
 
                 # Hand the newest data to the per-view workers.
                 with self.source_condition:
-                    self.latest_source = (frame, tracks, latest_raw_depth, scan)
+                    self.latest_source = (latest_frame, published, latest_raw_depth, scan)
                     self.source_version += 1
                     self.source_condition.notify_all()
 
@@ -517,8 +524,10 @@ class FlaskServer:
                         f"Acquisition/tracking/ROS took "
                         f"{processing_elapsed * 1000:.0f} ms"
                     )
-                    
+
                     last_processing_debug_time = debug_now
+            else:
+                time.sleep(0.005)
                         
     def _render_stream(self, name, frame, tracks, raw_depth, scan):
         """Build the BGR image for one view from the newest source data."""
