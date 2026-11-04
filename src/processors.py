@@ -95,6 +95,15 @@ class DepthProcessor:
     def __init__(self, max_depth_mm = 8000):
         self.max_depth_mm = max(1, int(max_depth_mm))
 
+        # Precomputed color table: index 0 = invalid (black), 1 to 225 = TURBO colors.
+        table = cv2.applyColorMap(
+            np.arange(256, dtype = np.uint8).reshape(256, 1), cv2.COLORMAP_TURBO
+        )
+        
+        table[0] = 0
+        
+        self._lut = [np.ascontiguousarray(table[:, 0, i]) for i in range(3)]
+        
     def process(self, depth_frame):
         """Return a BGR colorized image, or None when no valid frame is given."""
         if depth_frame is None:
@@ -104,18 +113,20 @@ class DepthProcessor:
         if depth.ndim != 2:
             return None
 
-        invalid = depth == 0
+        # 255 where depth is valid, 0 where depth is missing.
+        valid = cv2.compare(depth, 0, cv2.CMP_GT)
 
-        # Invert the scale so nearer valid objects map to warmer colors.
+        # Invert the scale so nearer valid objects map to warmer colors (indexes 1..255).
         clipped_depth = np.minimum(depth, self.max_depth_mm)
         intensity = cv2.convertScaleAbs(
-            clipped_depth, alpha = -255.0 / self.max_depth_mm, beta = 255.0
-        ) 
+            clipped_depth, alpha = -254.0 / self.max_depth_mm, beta = 255.0
+        )
 
-        intensity[invalid] = 0  # Set invalid pixels to black before colorization.
-        
-        colorized = cv2.applyColorMap(intensity, cv2.COLORMAP_TURBO)
-        colorized[invalid] = 0
+        # Missing pixels become index 0, which the table maps to black.
+        intensity = cv2.bitwise_and(intensity, valid)
+
+        # Look up each pixel's color (one table per color channel).
+        colorized = cv2.merge([cv2.LUT(intensity, table) for table in self._lut])
 
         cv2.putText(
             colorized,
